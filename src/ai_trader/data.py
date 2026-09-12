@@ -9,17 +9,14 @@ from __future__ import annotations
 import math
 import os
 import random
-import re
 import time
-import urllib.parse
-import xml.etree.ElementTree as ET
 from concurrent import futures
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import requests
 
-from . import config as C, indicators, quant
+from . import config as C, indicators, news as news_feed, quant
 
 KST = timezone(timedelta(hours=9))
 # ponytail: KRX 정규장만 본다. NXT 연장세션(08:00~20:00)이 필요해지면 여기만 넓힌다.
@@ -212,32 +209,12 @@ class TossFeed:
         return False
 
 
-_NEWS_CACHE: dict[str, tuple[float, list[dict]]] = {}
-
-
 def news(symbol: str, limit: int = 4, ttl: int = 900) -> list[dict]:
-    """구글 뉴스 RSS 헤드라인. 네트워크가 죽어도 랩은 멈추지 않는다 — 빈 리스트를 준다."""
-    hit = _NEWS_CACHE.get(symbol)
-    if hit and time.time() - hit[0] < ttl:
-        return hit[1]
-    q = urllib.parse.quote(f"{NAMES.get(symbol, symbol)} 주가")
-    url = f"https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
-    items: list[dict] = []
-    try:
-        r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-        r.raise_for_status()
-        for node in ET.fromstring(r.content).iter("item"):
-            title = (node.findtext("title") or "").strip()
-            if not title:
-                continue
-            items.append({"title": re.sub(r"\s+", " ", title),
-                          "published": (node.findtext("pubDate") or "").strip()})
-            if len(items) >= limit:
-                break
-    except Exception as exc:  # 뉴스는 있으면 좋은 것. 없다고 랩을 세우지 않는다.
-        items = [{"title": f"[news unavailable: {type(exc).__name__}]", "published": ""}]
-    _NEWS_CACHE[symbol] = (time.time(), items)
-    return items
+    """종목별 뉴스 헤드라인. 수집은 news.py 가 한다 — 뉴스 코드를 한 곳에 둔다.
+
+    네트워크가 죽어도 랩은 멈추지 않는다 — 없으면 없다고 적힌 한 줄이 온다.
+    """
+    return news_feed.for_symbol(symbol, NAMES.get(symbol, symbol), limit=limit, ttl=ttl)
 
 
 def make_feed(paper: bool = True, live_data: bool = False):

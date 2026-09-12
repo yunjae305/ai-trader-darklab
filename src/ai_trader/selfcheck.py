@@ -334,6 +334,28 @@ def no_llm_key_still_trades_on_rules():
     assert brain.decide(b.snapshot(prices), bare)["brain"] == "offline-stub"
 
 
+def news_reports_dead_feeds_instead_of_going_quiet():
+    """매체 피드가 죽으면 조용히 빈 화면이 되면 안 된다 — 못 받았다고 말해야 한다."""
+    from . import news as N
+    assert len(N.FEEDS) >= 5, f"수집 매체가 너무 적다: {len(N.FEEDS)}"
+    for f in N.FEEDS:
+        assert {"source", "category", "url"} <= set(f), f"피드 정의가 불완전하다: {f}"
+        assert f["url"].startswith("http"), f
+    # 죽은 주소는 예외를 올리지 않고 unavailable 로 돌려준다 (네트워크 없이 즉시 실패)
+    dead = N.fetch_feed({"source": "테스트", "category": "x",
+                         "url": "http://127.0.0.1:9/없는피드"}, 3)
+    assert dead and dead[0].get("unavailable"), f"죽은 피드가 조용히 넘어갔다: {dead}"
+    assert dead[0]["source"] == "테스트", "어느 매체가 죽었는지 안 적혔다"
+
+    # 시각 파싱: RFC822 를 읽고, 못 읽으면 지어내지 않고 빈 문자열
+    import xml.etree.ElementTree as ET
+    node = ET.fromstring("<item><title>t</title><pubDate>Fri, 12 Sep 2026 16:19:00 +0900</pubDate></item>")
+    assert N._when(node).startswith("2026-09-12"), N._when(node)
+    assert N._when(ET.fromstring("<item><pubDate>엉터리</pubDate></item>")) == ""
+    assert N._when(ET.fromstring("<item></item>")) == ""
+    assert N._clean(" <b>제목</b>\n 둘 ") == "제목 둘", N._clean(" <b>제목</b>\n 둘 ")
+
+
 def orders_route_by_market():
     """국내는 키움, 해외는 토스. 잘못 라우팅된 주문은 엉뚱한 계좌에서 체결된다."""
     assert C.market_of("005930") == "KR" and C.market_of("247540") == "KR"
@@ -410,6 +432,7 @@ CHECKS = [
     ("퀀트는 측정만 하고 판단 안 한다", quant_measures_but_never_decides),
     ("키움이 잘못된 주문을 먼저 막는다", kiwoom_rejects_bad_orders_before_sending),
     ("국내는 키움·해외는 토스로 갈린다", orders_route_by_market),
+    ("죽은 뉴스 피드를 조용히 안 넘긴다", news_reports_dead_feeds_instead_of_going_quiet),
     (".env 키가 실제로 읽힌다", env_file_actually_reaches_config),
     ("LLM 키 없어도 규칙으로 매매한다", no_llm_key_still_trades_on_rules),
     ("장 마감 판정이 추측을 안 한다", market_gate_knows_when_it_is_guessing),

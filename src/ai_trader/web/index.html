@@ -192,13 +192,18 @@ function renderCommand(d) {
       </div>`).join('')
       : none('판단 기록이 없다 — python3 -m ai_trader.loop --paper --once'));
 
-  const insight = card('Market Insight', '실시간 뉴스 헤드라인',
-    d.news.length ? d.news.map(n => `
-      <div class="row"><div style="flex:1;min-width:0">
-        <div class="cd">${esc(n.name)}</div>
-        <div style="font-weight:600;margin-top:3px">${esc(n.title)}</div>
-        <div class="why mono" style="font-size:11px">${esc(n.published).slice(0, 22)}</div>
-      </div></div>`).join('')
+  const feeds = [...new Set(d.news.filter(n => n.source).map(n => n.source))];
+  const insight = card('Market Insight', `증권·경제 매체 ${feeds.length}곳 실시간 헤드라인 · ${feeds.join(' · ')}`,
+    d.news.length ? d.news.map(n => n.unavailable
+      ? `<div class="none">못 받은 피드 — ${esc(n.unavailable)}</div>`
+      : `<div class="row">
+        <span class="t">${hhmm(n.published).slice(6)}</span>
+        <div style="flex:1;min-width:0">
+          <div><span class="st">${esc(n.source)}</span> <span class="cd">${esc(n.category)}</span></div>
+          <div style="font-weight:600;margin-top:4px">${n.link
+            ? `<a href="${esc(n.link)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(n.title)}</a>`
+            : esc(n.title)}</div>
+        </div></div>`).join('')
       : none('뉴스를 못 받았다 — 네트워크를 확인하라'));
 
   const inc = d.incidents.length ? card('Incidents', '킬스위치·손절·오류',

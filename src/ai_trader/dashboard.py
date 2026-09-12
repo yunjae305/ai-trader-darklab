@@ -24,7 +24,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import (benchmark, brain, broker as bk, config as C, correlation,
-               data, journal)
+               data, journal, news)
 
 WEB = Path(__file__).resolve().parent / "web"
 TOKEN = os.getenv("AI_TRADER_DASH_TOKEN") or secrets.token_urlsafe(9)
@@ -216,17 +216,9 @@ def portfolio() -> dict:
                       if f.get("status") == "FILLED"][-40:][::-1]}
 
 
-def market_insight(limit: int = 8) -> list[dict]:
-    """뉴스 헤드라인. 유니버스 상위 종목 것을 모아 최신순으로."""
-    items = []
-    for sym in C.UNIVERSE[:6]:
-        for n in data.news(sym, limit=2):
-            title = n.get("title", "")
-            if title.startswith("[news unavailable"):
-                continue
-            items.append({"symbol": sym, "name": data.NAMES.get(sym, sym),
-                          "title": title, "published": n.get("published", "")})
-    return items[:limit]
+def market_insight(limit: int = 20) -> list[dict]:
+    """시장 전체 헤드라인. 증권·경제 매체 RSS 를 직접 받아 합친 것 (news.py)."""
+    return news.headlines(limit=limit)
 
 
 def command_state() -> dict:
