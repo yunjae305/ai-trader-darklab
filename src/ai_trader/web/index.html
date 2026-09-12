@@ -47,6 +47,10 @@ h1{font-size:26px;margin:18px 0 2px;letter-spacing:-.5px}
 .scroll{display:flex;gap:10px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
 .scroll::-webkit-scrollbar{display:none}
 .ix{background:var(--tile);border-radius:14px;padding:13px 16px;min-width:132px;flex:0 0 auto}
+.grid-ix{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:9px}
+.grid-ix .ix{min-width:0;padding:12px}
+.grid-ix .v{font-size:19px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grid-ix .k{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ix .k{font-size:12px;color:var(--dim)} .ix .v{font:700 19px ui-monospace,Menlo,monospace;margin:5px 0 3px}
 .none{color:var(--dim);font-size:13px;background:var(--tile);border-radius:12px;padding:13px;margin-top:8px}
 nav{position:fixed;left:0;right:0;bottom:0;background:rgba(240,235,227,.96);
@@ -167,11 +171,12 @@ function renderCommand(d) {
       </div>`).join('')}</div>`
       : none('백테스트 기록이 없다 — python3 -m ai_trader.backtest'));
 
-  const idx = card('Market Index', '지수와 환율', `<div class="scroll">${d.indices.map(i => `
+  const idx = card('Market Index', '지수와 환율', `<div class="grid-ix">${d.indices.map(i => `
     <div class="ix"><div class="k">${esc(i.name)}</div>
       ${i.unavailable ? `<div class="v" style="font-size:14px;color:var(--dim)">—</div><div class="n">${esc(i.unavailable)}</div>`
         : `<div class="v">${Number(i.last).toLocaleString('ko-KR', {maximumFractionDigits: 2})}</div>
-           <div class="n ${cls(i.change_pct)}">${i.change_pct > 0 ? '▲' : '▼'} ${pct(i.change_pct)}</div>`}
+           <div class="n ${cls(i.change_pct)}">${i.change_pct > 0 ? '▲' : i.change_pct < 0 ? '▼' : '·'} ${pct(i.change_pct)}</div>
+           ${i.unit ? `<div class="n" style="font-size:10px">${esc(i.unit)}</div>` : ''}`}
     </div>`).join('')}</div>`);
 
   const ai = card('AI Analysis', '최근 분석과 주문 판단',

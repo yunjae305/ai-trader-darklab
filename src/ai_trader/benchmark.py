@@ -79,7 +79,14 @@ def alpha(equity_curve: list[float], days: int = None, end=None, symbol: str = N
 
 
 # 대시보드가 보여주는 지수·환율. 매매에 쓰이지 않는다 — 사람이 보는 배경이다.
-INDICES = [("KOSPI", "^KS11"), ("S&P500", "^GSPC"), ("USD/KRW", "KRW=X"), ("JPY/KRW", "JPYKRW=X")]
+INDICES = [
+    {"name": "코스피", "symbol": "^KS11"},
+    {"name": "코스닥", "symbol": "^KQ11"},
+    {"name": "S&P500", "symbol": "^GSPC"},
+    {"name": "USD/KRW", "symbol": "KRW=X", "unit": "원"},
+    # yfinance 는 1엔당 원화(8.71)로 준다. 국내 표기 관례는 100엔당이라 100 을 곱한다.
+    {"name": "JPY/KRW", "symbol": "JPYKRW=X", "scale": 100, "unit": "원/100엔"},
+]
 
 _QUOTE_CACHE: tuple[float, list] = (0.0, [])
 
@@ -92,18 +99,23 @@ def quotes(ttl: int = 300) -> list[dict]:
     out = []
     try:
         import yfinance as yf
-        raw = yf.download([s for _, s in INDICES], period="7d", interval="1d",
+        raw = yf.download([i["symbol"] for i in INDICES], period="7d", interval="1d",
                           progress=False, auto_adjust=False, group_by="ticker")
-        for name, sym in INDICES:
+        for spec in INDICES:
+            sym, scale = spec["symbol"], spec.get("scale", 1)
+            row = {"name": spec["name"], "symbol": sym, "unit": spec.get("unit", "")}
             try:
                 closes = raw[sym]["Close"].dropna()
                 last, prev = float(closes.iloc[-1]), float(closes.iloc[-2])
-                out.append({"name": name, "symbol": sym, "last": round(last, 2),
-                            "change_pct": round((last - prev) / prev * 100, 2)})
+                # 등락률은 배율과 무관하다 — 비율이므로 스케일이 약분된다
+                row.update(last=round(last * scale, 2),
+                           change_pct=round((last - prev) / prev * 100, 2))
             except Exception:
-                out.append({"name": name, "symbol": sym, "unavailable": "응답 없음"})
+                row["unavailable"] = "응답 없음"
+            out.append(row)
     except Exception as exc:
-        out = [{"name": n, "symbol": s, "unavailable": type(exc).__name__} for n, s in INDICES]
+        out = [{"name": i["name"], "symbol": i["symbol"], "unit": i.get("unit", ""),
+                "unavailable": type(exc).__name__} for i in INDICES]
     _QUOTE_CACHE = (time.time(), out)
     return out
 
