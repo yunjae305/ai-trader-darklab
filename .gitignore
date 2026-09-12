@@ -1,0 +1,21 @@
+.venv/
+__pycache__/
+.env
+.env.local
+
+# 시세 원본 (수십~수백 MB). download.py 로 언제든 다시 받는다.
+data/
+*.parquet
+.cache/
+
+# 계좌·주문 기록
+*.db
+*.sqlite3
+.proposals.json
+lab/mlflow.db
+lab/mlartifacts/
+lab/paper_state.json
+lab/policy_history/
+research/*.jsonl
+research/*.md
+!research/toss_openapi_reference.md
