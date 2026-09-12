@@ -1,9 +1,12 @@
 """주문 집행 계층. 6:4 슬리브 회계는 여기서만 강제된다.
 
-PaperBroker  — 키 없이 도는 모의 계좌 (한 달 테스트용)
-TossBroker   — 토스증권 OpenAPI 실계좌 (AI_TRADER_LIVE=1 일 때만 실주문)
+PaperBroker   — 키 없이 도는 모의 계좌 (자체 장부)
+RoutedBroker  — 회계는 PaperBroker 그대로, 주문만 시장별 창구로 내려보낸다
 
-두 브로커는 같은 인터페이스를 갖는다: snapshot / buy / sell / mark
+    국내 (6자리 코드) → KiwoomVenue  (KIWOOM_MODE=demo 면 모의투자, 돈 안 걸림)
+    해외 (영문 티커)  → TossVenue    (모의투자 서버 없음 — AI_TRADER_LIVE=1 필요)
+
+한 포트폴리오가 두 시장을 같이 담으므로 창구는 종목마다 갈린다.
 매수·매도·보유 중 무엇을 할지는 brain 이 정한다. 브로커는 "할 수 있나"만 답한다.
 """
 from __future__ import annotations
@@ -224,17 +227,41 @@ class PaperBroker:
             return f"daily loss {self.day_return_pct(prices):.2f}% breached kill-switch"
         return None
 
+# ---------------------------------------------------------------------------
+# 주문 창구. 회계는 하지 않는다 — 주문을 내고 결과를 돌려줄 뿐이다.
+# 국내(6자리) → 키움, 해외(영문 티커) → 토스.
+# ---------------------------------------------------------------------------
 
-class TossBroker(PaperBroker):
-    """토스증권 OpenAPI. 회계는 PaperBroker 를 그대로 쓰고 집행만 실계좌로 보낸다."""
+class Venue:
+    market = ""
+    name = ""
 
-    mode = "toss"
+    def send(self, symbol: str, side: str, qty: int, price: float) -> dict:
+        raise NotImplementedError
 
-    def __init__(self, **kw):
-        super().__init__(**kw)
+    @staticmethod
+    def unavailable() -> str:
+        """쓸 수 없으면 그 이유. 쓸 수 있으면 빈 문자열."""
+        return ""
+
+
+class TossVenue(Venue):
+    """토스증권 OpenAPI — 해외주식 주문. 토스에는 모의투자 서버가 없다.
+
+    그래서 실주문은 AI_TRADER_LIVE=1 일 때만 나간다. 시세 조회 토큰은 이 클래스가 쥔다
+    (TossFeed 도 이 토큰을 쓴다 — 계좌 헤더 없이 시세만 부르는 경로다).
+    """
+    market = "US"
+    name = "토스증권"
+
+    def __init__(self):
         self._token = ""
         self._token_exp = 0.0
         self.session = requests.Session()
+
+    @staticmethod
+    def unavailable() -> str:
+        return "" if C.have_broker_keys() else "TOSS_CLIENT_ID/SECRET/ACCOUNT 없음"
 
     def token(self) -> str:
         if self._token and time.time() < self._token_exp - 60:
@@ -261,11 +288,13 @@ class TossBroker(PaperBroker):
         r = self.session.get(f"{C.TOSS_BASE}/api/v1/holdings",
                              headers=self._headers(account=True), timeout=10)
         r.raise_for_status()
-        return r.json().get("holdings", r.json().get("result", []))
+        body = r.json()
+        return body.get("holdings", body.get("result", []))
 
-    def _send(self, symbol: str, side: str, qty: int, price: float) -> dict:
+    def send(self, symbol: str, side: str, qty: int, price: float) -> dict:
         if not C.LIVE_TRADING:
-            return {"skipped": "AI_TRADER_LIVE != 1", "symbol": symbol, "side": side, "qty": qty}
+            return {"skipped": "AI_TRADER_LIVE != 1", "venue": self.name,
+                    "symbol": symbol, "side": side, "qty": qty}
         r = self.session.post(
             f"{C.TOSS_BASE}/api/v1/orders",
             headers={**self._headers(account=True), "Content-Type": "application/json"},
@@ -277,58 +306,95 @@ class TossBroker(PaperBroker):
             raise Rejected(f"toss {r.status_code}: {r.text[:200]}")
         return r.json()
 
-    def buy(self, symbol: str, sleeve: str, qty: int, price: float) -> dict:
-        fill = super().buy(symbol, sleeve, qty, price)  # 가드레일 먼저 통과해야 한다
-        fill["broker"] = self._send(symbol, "BUY", qty, price)
-        return fill
 
-    def sell(self, symbol: str, qty: int, price: float) -> dict:
-        fill = super().sell(symbol, qty, price)
-        fill["broker"] = self._send(symbol, "SELL", fill["qty"], price)
-        return fill
+class KiwoomVenue(Venue):
+    """키움 REST — 국내주식 주문. 토스와 달리 모의투자 서버(mockapi)가 따로 있다.
 
-
-class KiwoomBroker(PaperBroker):
-    """키움 REST 국내주식. 회계는 PaperBroker, 집행만 증권사로 보낸다.
-
-    토스와 결정적으로 다른 점 — 키움은 모의투자 서버(mockapi)가 따로 있다.
-    demo 모드 주문은 돈이 걸리지 않으므로 AI_TRADER_LIVE 없이도 실제로 나간다.
-    real 모드는 토스와 같은 규칙이다: AI_TRADER_LIVE=1 이어야만 나간다.
+    demo 주문은 돈이 걸리지 않으므로 AI_TRADER_LIVE 없이도 나간다.
+    real 은 토스와 같은 규칙이다: AI_TRADER_LIVE=1 이어야만 나간다.
     """
+    market = "KR"
 
-    def __init__(self, **kw):
-        super().__init__(**kw)
+    def __init__(self):
         from .kiwoom import Kiwoom
         self.api = Kiwoom()
-        self.mode = f"kiwoom-{self.api.mode}"
+        self.name = f"키움증권({self.api.mode})"
 
-    def _send(self, symbol: str, side: str, qty: int, price: float) -> dict:
+    @staticmethod
+    def unavailable() -> str:
+        if C.have_kiwoom_keys():
+            return ""
+        return (f"KIWOOM_MODE={C.KIWOOM_MODE} 에 맞는 "
+                f"APP_KEY{C._KW_SUFFIX}/APP_SECRET{C._KW_SUFFIX} 없음")
+
+    def send(self, symbol: str, side: str, qty: int, price: float) -> dict:
         if self.api.mode == "real" and not C.LIVE_TRADING:
-            return {"skipped": "AI_TRADER_LIVE != 1", "symbol": symbol, "side": side, "qty": qty}
+            return {"skipped": "AI_TRADER_LIVE != 1", "venue": self.name,
+                    "symbol": symbol, "side": side, "qty": qty}
         from .kiwoom import snap_price
         try:
             return self.api.order(symbol, side, qty, snap_price(price))
         except Exception as exc:  # 원장 거절로 랩을 세우지 않는다 — 기록하고 다음 판단으로
             raise Rejected(f"kiwoom: {exc}") from None
 
+
+VENUES = {"KR": KiwoomVenue, "US": TossVenue}
+
+
+class RoutedBroker(PaperBroker):
+    """실계좌 집행. 회계·가드레일은 PaperBroker 그대로, 주문만 시장별 창구로 내려보낸다.
+
+    한 포트폴리오가 국내와 해외를 같이 담으므로 창구는 종목마다 갈린다.
+    키가 없는 시장은 조용히 넘어가지 않고 주문을 거절한다 — 안 나간 주문을
+    체결된 것처럼 장부에 적으면 그 뒤 모든 숫자가 거짓말이 된다.
+    """
+    mode = "routed"
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.venues: dict[str, Venue] = {}
+        self.blocked: dict[str, str] = {}
+        for market, cls in VENUES.items():
+            why = cls.unavailable()
+            if why:
+                self.blocked[market] = why
+                continue
+            try:
+                self.venues[market] = cls()
+            except Exception as exc:
+                self.blocked[market] = f"{type(exc).__name__}: {exc}"
+        if not self.venues:
+            raise RuntimeError("쓸 수 있는 증권사가 없다 — " +
+                               " / ".join(f"{m}: {w}" for m, w in self.blocked.items()))
+        self.mode = "routed:" + "+".join(
+            f"{m}={v.name}" for m, v in sorted(self.venues.items()))
+
+    def venue_for(self, symbol: str) -> Venue:
+        market = C.market_of(symbol)
+        venue = self.venues.get(market)
+        if venue is None:
+            raise Rejected(f"{symbol} 은 {market} 인데 창구가 없다: "
+                           f"{self.blocked.get(market, '미지원 시장')}")
+        return venue
+
+    def _send(self, symbol: str, side: str, qty: int, price: float) -> dict:
+        return self.venue_for(symbol).send(symbol, side, qty, price)
+
     def buy(self, symbol: str, sleeve: str, qty: int, price: float) -> dict:
+        self.venue_for(symbol)               # 창구가 없으면 장부를 건드리기 전에 막는다
         fill = super().buy(symbol, sleeve, qty, price)  # 가드레일 먼저 통과해야 한다
         fill["broker"] = self._send(symbol, "BUY", qty, price)
         return fill
 
     def sell(self, symbol: str, qty: int, price: float) -> dict:
+        self.venue_for(symbol)
         fill = super().sell(symbol, qty, price)
         fill["broker"] = self._send(symbol, "SELL", fill["qty"], price)
         return fill
 
 
-def make_broker(paper: bool = True, kiwoom: bool = False):
-    if kiwoom:
-        if not C.have_kiwoom_keys():
-            raise RuntimeError(
-                f"키움 키가 없다 — KIWOOM_MODE={C.KIWOOM_MODE} 에 맞는 "
-                f"APP_KEY{C._KW_SUFFIX}/APP_SECRET{C._KW_SUFFIX} 를 .env 에 넣어라")
-        return KiwoomBroker.load()
-    if paper or not C.have_broker_keys():
+def make_broker(paper: bool = True):
+    """paper=True 면 자체 장부, False 면 시장별로 실제 증권사에 낸다."""
+    if paper:
         return PaperBroker.load()
-    return TossBroker.load()
+    return RoutedBroker.load()

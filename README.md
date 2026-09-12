@@ -36,8 +36,9 @@ export PYTHONPATH=src
 | `ANTHROPIC_API_KEY` | 판단 엔진 | `offline-stub` 으로 대체 (판단 아님) |
 | `TOSS_CLIENT_ID` / `TOSS_CLIENT_SECRET` / `TOSS_ACCOUNT` | 토스 시세·주문 | 합성 시장으로 대체 |
 | `KIWOOM_MODE` (`demo`/`real`) | 키움 모의투자 / 실계좌 | `demo` |
-| `APP_KEY_MOCK` / `APP_SECRET_MOCK` | 키움 모의투자 키 | `--kiwoom` 불가 |
-| `APP_KEY` / `APP_SECRET` | 키움 실계좌 키 (`KIWOOM_MODE=real` 일 때만) | `--kiwoom` 불가 |
+| `APP_KEY_MOCK` / `APP_SECRET_MOCK` | 키움 모의투자 키 | 국내 주문 거절 |
+| `APP_KEY` / `APP_SECRET` | 키움 실계좌 키 (`KIWOOM_MODE=real` 일 때만) | 국내 주문 거절 |
+| `AI_TRADER_FETCH_WORKERS` | 관측 팩 병렬 조회 수 (기본 8) | 8 |
 | `GS_QUANT_PATH` | gs-quant 소스 경로 (선택) | stdlib 로 같은 값 계산 |
 | `AI_TRADER_LIVE=1` | 실계좌 주문 허용 | 실주문 안 나감 |
 
@@ -51,7 +52,7 @@ python3 -m ai_trader.selfcheck                 # 자체 점검 22항목
 python3 -m ai_trader.loop --paper --once       # 한 사이클: 관측 → 판단 → 집행 → 기록
 python3 -m ai_trader.loop --paper              # 무인 연속 운용 (15분 주기, 합성 시장)
 python3 -m ai_trader.loop --paper --live-data  # 모의투자: 토스 실시세 + 페이퍼 계좌
-python3 -m ai_trader.loop --kiwoom --live-data # 키움 모의계좌로 실제 주문 (돈 안 걸림)
+python3 -m ai_trader.loop --live --live-data   # 실계좌 라우팅: 국내→키움, 해외→토스
 python3 -m ai_trader.benchmark               # S&P500 지수 수집 (초과수익 계산용)
 python3 -m ai_trader.backtest --days 30      # 한 달 운용 (기본: 내려받은 실제 일봉)
 python3 -m ai_trader.backtest --days 30 --source synthetic   # 랜덤워크 = 배선 점검용
@@ -73,17 +74,31 @@ python3 -m ai_trader.walkforward --train-years 3 --blind-years 1 --live-years 1
 
 | 실행 | 시세 | 계좌 | 주문 |
 |---|---|---|---|
-| `--paper` | 합성 랜덤워크 | 페이퍼 | 안 나감 |
-| `--paper --live-data` | **토스 실시세** | 페이퍼 (자체 장부) | 안 나감 |
-| `--kiwoom --live-data` | 토스 실시세 | **키움 모의계좌** | **나감 (돈 안 걸림)** |
-| `--live` + `AI_TRADER_LIVE=1` | 토스 실시세 | 토스 실계좌 | **나감 (돈 걸림)** |
+| `--paper` | 합성 랜덤워크 | 자체 장부 | 안 나감 |
+| `--paper --live-data` | **토스 실시세** | 자체 장부 | 안 나감 |
+| `--live --live-data` | 토스 실시세 | **시장별 실계좌** | **나감** (아래 표) |
 
 `--live-data` 는 시세 조회 토큰만 쓴다 — 주문 API 를 아예 부르지 않으므로 키가 새어도 체결되지 않는다.
-`--kiwoom` 은 `KIWOOM_MODE=demo` 면 모의투자 서버로 주문이 실제로 나간다. 체결·잔고를 증권사가
-처리하므로 자체 페이퍼 장부보다 진짜에 가깝다. `KIWOOM_MODE=real` 은 `AI_TRADER_LIVE=1` 이 있어야만 나간다.
 
-주문은 키움, 시세는 토스로 갈린다 — 이식한 키움 클라이언트에 일봉 조회 TR 이 없기 때문이다.
-`kiwoom.py` 에 `ka10081` 을 붙이면 한쪽으로 합칠 수 있다.
+### 주문은 시장마다 다른 증권사로 간다
+
+| 종목 | 시장 | 창구 | 돈이 걸리나 |
+|---|---|---|---|
+| `005930` (6자리 숫자) | KR | **키움증권** | `KIWOOM_MODE=demo` 면 **안 걸림** (모의투자 서버) |
+| `AAPL` (영문 티커) | US | **토스증권** | 걸림 — 토스는 모의투자 서버가 없다 |
+
+`RoutedBroker` 가 종목마다 창구를 고른다. 회계·가드레일(슬리브·20% 상한·손절 -15%·킬스위치)은
+창구와 무관하게 `PaperBroker` 가 그대로 강제하고, 통과한 주문만 증권사로 나간다.
+
+- 키움 `demo` 주문은 돈이 걸리지 않으므로 `AI_TRADER_LIVE` 없이 나간다. `real` 은 있어야 나간다.
+- 토스 주문은 언제나 `AI_TRADER_LIVE=1` 이 있어야 나간다.
+- **키가 없는 시장의 주문은 거절된다.** 조용히 넘어가지 않는다 — 안 나간 주문을 체결된 것처럼
+  장부에 적으면 그 뒤 모든 숫자가 거짓말이 된다. 한 시장 키만 있으면 그 시장만 돈다.
+- 시세는 양쪽 다 토스가 준다. 이식한 키움 클라이언트에 일봉 조회 TR(`ka10081`)이 없어서인데,
+  붙이면 국내 시세도 키움으로 옮길 수 있다.
+
+기본 유니버스는 국내 20종목이다. `AI_TRADER_UNIVERSE` 에 영문 티커를 섞으면 해외도 같이 본다
+(예: `AI_TRADER_UNIVERSE=005930,000660,AAPL,NVDA`). 무엇을 살지는 여전히 brain 이 정한다.
 
 **주말에는 안 돈다.** 실시세를 쓰는 순간 장 운영 시간을 따른다. 매 사이클 앞에서
 `GET /api/v1/market-calendar/KR` 로 개장일인지 확인하고, KRX 정규장(09:00~15:30 KST)

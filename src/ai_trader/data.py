@@ -7,11 +7,13 @@ news()        — 구글 뉴스 RSS (키 불필요). 실시간 헤드라인.
 from __future__ import annotations
 
 import math
+import os
 import random
 import re
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
+from concurrent import futures
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -22,6 +24,8 @@ from . import config as C, indicators, quant
 KST = timezone(timedelta(hours=9))
 # ponytail: KRX 정규장만 본다. NXT 연장세션(08:00~20:00)이 필요해지면 여기만 넓힌다.
 SESSION_KST = (9 * 60, 15 * 60 + 30)
+# 관측 팩을 만들 때 종목별로 병렬 조회한다. 토스 시세 한도(초당 15~20)를 넘지 않는 선.
+FETCH_WORKERS = int(os.getenv("AI_TRADER_FETCH_WORKERS", "8"))
 
 NAMES = {
     "005930": "삼성전자", "000660": "SK하이닉스", "373220": "LG에너지솔루션",
@@ -139,8 +143,8 @@ class TossFeed:
     source = "toss"
 
     def __post_init__(self):
-        from .broker import TossBroker
-        self._auth = TossBroker()
+        from .broker import TossVenue
+        self._auth = TossVenue()  # 시세는 계좌 헤더 없이 토큰만으로 부른다
         self.session = requests.Session()
         self._cal: tuple[float, bool] | None = None
 
@@ -250,13 +254,13 @@ def observe(feed, symbols: list[str], with_news: bool = True,
     지표와 점수는 '측정'이지 '판단'이 아니다 — 무엇을 할지는 brain 만 정한다.
     그래서 quant 결과에서 매수/매도 결론(verdict·buy)은 애초에 만들지 않는다.
     """
-    pack = []
-    for sym in symbols:
+    def one(sym: str) -> dict:
         bars = feed.candles(sym, 60)
         closes = [b["close"] for b in bars]
         vols = [b["volume"] for b in bars]
         row = {
             "symbol": sym,
+            "market": C.market_of(sym),
             "name": NAMES.get(sym, sym),
             "closes_60d": [round(c, 1) for c in closes],
             "observed": describe(closes, vols),
@@ -270,5 +274,12 @@ def observe(feed, symbols: list[str], with_news: bool = True,
             # 봉이 모자라면 지표가 안 나온다. 없는 값을 지어내느니 없다고 말한다.
             row["indicators"] = {"unavailable": f"{type(exc).__name__}: {exc}"}
             row["quant"] = {"unavailable": True}
-        pack.append(row)
-    return pack
+        return row
+
+    # 종목마다 캔들·뉴스가 각각 네트워크를 탄다. 20종목이면 왕복 40번이라 순차로는 사이클이
+    # 분 단위로 늘어난다. 순서는 symbols 그대로 유지한다 — 팩 순서가 흔들리면 기록 비교가 깨진다.
+    workers = min(FETCH_WORKERS, len(symbols)) or 1
+    if workers == 1:
+        return [one(s) for s in symbols]
+    with futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(one, symbols))

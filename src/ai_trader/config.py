@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -62,6 +63,23 @@ MLFLOW_EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT", "ai-trader-darklab")
 
 def have_broker_keys() -> bool:
     return bool(TOSS_CLIENT_ID and TOSS_CLIENT_SECRET and TOSS_ACCOUNT)
+
+
+MARKETS = ("KR", "US")
+
+
+def market_of(symbol: str) -> str:
+    """종목이 어느 시장인지. 국내는 6자리 숫자, 해외는 영문 티커다.
+
+    주문이 어느 증권사로 갈지가 여기서 갈린다 — 국내는 키움, 해외는 토스.
+    모호하면 추측하지 않고 세운다. 잘못 라우팅된 주문은 엉뚱한 계좌에서 체결된다.
+    """
+    s = (symbol or "").strip().upper()
+    if re.fullmatch(r"\d{6}", s):
+        return "KR"
+    if re.fullmatch(r"[A-Z][A-Z.\-]{0,9}", s):
+        return "US"
+    raise ValueError(f"어느 시장인지 알 수 없는 종목 표기: {symbol!r}")
 
 
 def have_kiwoom_keys() -> bool:

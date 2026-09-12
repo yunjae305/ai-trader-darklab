@@ -134,17 +134,16 @@ def cycle(broker, feed, mlf=None, step: int | None = None, with_news: bool = Tru
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="ai_trader.loop", description="다크랩 매매 루프")
     ap.add_argument("--paper", action="store_true", help="모의 계좌로 실행 (기본값)")
-    ap.add_argument("--live", action="store_true", help="토스 실계좌 (AI_TRADER_LIVE=1 도 필요)")
+    ap.add_argument("--live", action="store_true",
+                    help="실계좌로 라우팅 — 국내는 키움, 해외는 토스")
     ap.add_argument("--live-data", action="store_true",
                     help="모의투자: 페이퍼 계좌 + 토스 실시세 (주문은 안 나간다)")
-    ap.add_argument("--kiwoom", action="store_true",
-                    help="키움 모의투자 계좌로 실제 주문 (KIWOOM_MODE=demo 면 돈 안 걸림)")
     ap.add_argument("--once", action="store_true", help="한 사이클만 돌고 종료")
     ap.add_argument("--no-news", action="store_true", help="뉴스 수집 건너뛰기")
     args = ap.parse_args(argv)
 
     paper = not args.live
-    broker = bk.make_broker(paper=paper, kiwoom=args.kiwoom)
+    broker = bk.make_broker(paper=paper)
     feed = data.make_feed(paper=paper, live_data=args.live_data)
     print(f"[darklab] broker={broker.mode} feed={feed.source} "
           f"brain={'claude' if C.have_brain_key() else 'OFFLINE-STUB(키 없음)'}")

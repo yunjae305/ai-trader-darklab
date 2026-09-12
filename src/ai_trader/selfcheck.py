@@ -262,10 +262,47 @@ def kiwoom_rejects_bad_orders_before_sending():
     K._selfcheck()  # 호가단위 표 + 잘못된 주문 조합 거절 (네트워크 없음)
     assert K.snap_price(70_050) == 70_000, "호가단위 내림이 틀렸다"
     try:
-        bk.make_broker(kiwoom=True)
-    except RuntimeError:
-        return  # 키가 없으면 여기서 막히는 게 맞다
-    assert C.have_kiwoom_keys(), "키도 없이 키움 브로커가 만들어졌다"
+        bk.make_broker(paper=False)
+    except RuntimeError as exc:
+        assert "쓸 수 있는 증권사가 없다" in str(exc), f"엉뚱한 이유로 막혔다: {exc}"
+        return  # 키가 하나도 없으면 여기서 막히는 게 맞다
+    assert C.have_kiwoom_keys() or C.have_broker_keys(), "키도 없이 실계좌 브로커가 만들어졌다"
+
+
+def orders_route_by_market():
+    """국내는 키움, 해외는 토스. 잘못 라우팅된 주문은 엉뚱한 계좌에서 체결된다."""
+    assert C.market_of("005930") == "KR" and C.market_of("247540") == "KR"
+    assert C.market_of("AAPL") == "US" and C.market_of("BRK.B") == "US"
+    for bad in ("", "12345", "1234567", "005930.KS", "한국"):
+        try:
+            C.market_of(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"모르는 표기를 추측해서 라우팅했다: {bad!r}")
+    assert set(bk.VENUES) == set(C.MARKETS), "시장과 창구가 안 맞는다"
+    assert bk.VENUES["KR"].market == "KR" and bk.VENUES["US"].market == "US"
+
+    # 키가 없는 시장은 조용히 넘어가지 않고 이유를 말해야 한다
+    for market, cls in bk.VENUES.items():
+        why = cls.unavailable()
+        have = C.have_kiwoom_keys() if market == "KR" else C.have_broker_keys()
+        assert bool(why) != have, f"{market} 창구의 가용 판정이 키 상태와 어긋난다: {why!r}"
+
+    # 창구가 없는 시장 주문은 장부를 건드리기 전에 막혀야 한다
+    class Deaf(bk.RoutedBroker):
+        def __init__(self, **kw):
+            bk.PaperBroker.__init__(self, **kw)
+            self.venues, self.blocked = {}, {"KR": "키 없음", "US": "키 없음"}
+            self.mode = "routed:none"
+    d = Deaf.fresh(10_000_000)
+    before = dict(d.cash)
+    try:
+        d.buy("005930", "STABLE", 1, 70_000)
+    except bk.Rejected as exc:
+        assert "KR" in str(exc), exc
+    else:
+        raise AssertionError("창구도 없이 주문이 나갔다")
+    assert d.cash == before and not d.positions, "막힌 주문이 장부를 바꿨다"
 
 
 def market_gate_knows_when_it_is_guessing():
@@ -307,6 +344,7 @@ CHECKS = [
     ("이식한 지표 계산이 안 깨졌다", ported_indicators_still_compute_correctly),
     ("퀀트는 측정만 하고 판단 안 한다", quant_measures_but_never_decides),
     ("키움이 잘못된 주문을 먼저 막는다", kiwoom_rejects_bad_orders_before_sending),
+    ("국내는 키움·해외는 토스로 갈린다", orders_route_by_market),
     ("장 마감 판정이 추측을 안 한다", market_gate_knows_when_it_is_guessing),
     ("모의투자는 실주문을 안 낸다", paper_never_trades_on_real_orders),
 ]
