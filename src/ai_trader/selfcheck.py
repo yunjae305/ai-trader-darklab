@@ -269,6 +269,62 @@ def kiwoom_rejects_bad_orders_before_sending():
     assert C.have_kiwoom_keys() or C.have_broker_keys(), "키도 없이 실계좌 브로커가 만들어졌다"
 
 
+def env_file_actually_reaches_config():
+    """.env 에 키를 넣으면 실제로 읽혀야 한다. 안 읽으면 키를 넣어도 아무 일이 안 일어난다."""
+    import os
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / ".env"
+        p.write_text('# 주석\n\nAI_TRADER_ENVTEST=  값  \nBAD_LINE\n'
+                     'AI_TRADER_ENVQ="사이 공백"\n'
+                     "AI_TRADER_ENVTEST2=이미있음\n", encoding="utf-8")
+        for k in ("AI_TRADER_ENVTEST", "AI_TRADER_ENVQ"):
+            os.environ.pop(k, None)
+        os.environ["AI_TRADER_ENVTEST2"] = "셸값"
+        try:
+            assert C._load_env(p) is True, ".env 를 못 읽었다"
+            # 따옴표 없는 값은 앞뒤 공백을 턴다 — 키 뒤에 붙은 공백은 인증을 조용히 깨뜨린다
+            assert os.environ["AI_TRADER_ENVTEST"] == "값", "따옴표 없는 값의 공백이 안 털렸다"
+            # 따옴표 안의 공백은 보존한다 (따옴표를 쓴 이유가 그것이다)
+            assert os.environ["AI_TRADER_ENVQ"] == "사이 공백", "따옴표 안 내용이 바뀌었다"
+            assert os.environ["AI_TRADER_ENVTEST2"] == "셸값", "셸 값을 .env 가 덮었다"
+            assert C._load_env(Path(tmp) / "없는파일") is False
+        finally:
+            for k in ("AI_TRADER_ENVTEST", "AI_TRADER_ENVQ", "AI_TRADER_ENVTEST2"):
+                os.environ.pop(k, None)
+
+
+def no_llm_key_still_trades_on_rules():
+    """LLM 키가 없어도 무작위가 아니라 퀀트 점수로 매매해야 한다."""
+    feed = data.SyntheticFeed()
+    b = bk.PaperBroker.fresh(10_000_000)
+    prices = feed.prices(C.UNIVERSE)
+    obs = data.observe(feed, C.UNIVERSE, with_news=False)
+    v = brain.decide(b.snapshot(prices), obs)
+    assert v["brain"] == "quant-fallback", f"퀀트 대역이 안 잡혔다: {v['brain']}"
+    assert not brain.is_ai(v["brain"]), "퀀트 판단이 LLM 판단으로 분류됐다"
+    assert all(brain.is_ai(x) is False for x in
+               ("offline-stub", "quant-fallback", "guardrail", "error:Timeout", "refusal"))
+    assert brain.is_ai("claude-opus-5"), "진짜 LLM 기록이 걸러졌다"
+
+    # 점수가 매수선을 넘으면 실제로 사야 한다
+    high = [{**o, "quant": {"score": 90.0, "reasons": ["테스트"], "parts": {}, "mode": "trend"}}
+            for o in obs[:2]]
+    out = brain.decide(b.snapshot(prices), high)
+    orders = brain.validate(out["decisions"], b.snapshot(prices), prices)
+    assert orders and all(d["action"] == "BUY" for d in orders), f"90점인데 안 샀다: {out['decisions']}"
+    assert all(d["quantity"] > 0 for d in orders)
+
+    # 점수가 매도선 아래면 보유를 정리해야 한다
+    b.buy(obs[0]["symbol"], "STABLE", 3, prices[obs[0]["symbol"]])
+    low = [{**obs[0], "quant": {"score": 5.0, "reasons": ["테스트"], "parts": {}, "mode": "trend"}}]
+    out = brain.decide(b.snapshot(prices), low)
+    assert [d["action"] for d in out["decisions"]] == ["SELL"], f"5점인데 안 팔았다: {out['decisions']}"
+
+    # 관측 팩에 점수가 아예 없으면 배선 점검 스텁으로 떨어진다
+    bare = [{k: x for k, x in o.items() if k != "quant"} for o in obs]
+    assert brain.decide(b.snapshot(prices), bare)["brain"] == "offline-stub"
+
+
 def orders_route_by_market():
     """국내는 키움, 해외는 토스. 잘못 라우팅된 주문은 엉뚱한 계좌에서 체결된다."""
     assert C.market_of("005930") == "KR" and C.market_of("247540") == "KR"
@@ -345,6 +401,8 @@ CHECKS = [
     ("퀀트는 측정만 하고 판단 안 한다", quant_measures_but_never_decides),
     ("키움이 잘못된 주문을 먼저 막는다", kiwoom_rejects_bad_orders_before_sending),
     ("국내는 키움·해외는 토스로 갈린다", orders_route_by_market),
+    (".env 키가 실제로 읽힌다", env_file_actually_reaches_config),
+    ("LLM 키 없어도 규칙으로 매매한다", no_llm_key_still_trades_on_rules),
     ("장 마감 판정이 추측을 안 한다", market_gate_knows_when_it_is_guessing),
     ("모의투자는 실주문을 안 낸다", paper_never_trades_on_real_orders),
 ]

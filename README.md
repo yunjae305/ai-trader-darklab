@@ -27,13 +27,22 @@
 pip3 install --user anthropic mlflow requests
 cp .env.example .env   # 키를 넣는다. 없어도 전 구간이 돈다.
 export PYTHONPATH=src
+
+python3 -m ai_trader.check   # 무엇이 되고 무엇이 안 되는지 먼저 본다 (조회만, 주문 안 냄)
 ```
+
+`.env` 는 `config.py` 가 import 시점에 자동으로 읽는다. 셸에 이미 있는 값이 파일보다 우선이다.
+
+**증권사 키만 넣어도 전 구간이 돈다.** `ANTHROPIC_API_KEY` 가 없으면 판단이 무작위 스텁으로
+떨어지는 게 아니라, 이식해 온 퀀트 점수(`quant.py`)가 판단을 맡는다 — 기록에
+`brain="quant-fallback"` 이 찍힌다. 자세한 것은 아래 [LLM 키가 없을 때](#llm-키가-없을-때).
 
 `.env` 에 넣는 값:
 
 | 변수 | 용도 | 없으면 |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | 판단 엔진 | `offline-stub` 으로 대체 (판단 아님) |
+| `ANTHROPIC_API_KEY` | 판단 엔진 | **퀀트 점수로 매매** (`quant-fallback`) |
+| `AI_TRADER_QUANT_BUY` / `_SELL` | 퀀트 대역의 매수·매도선 | 65 / 40 |
 | `TOSS_CLIENT_ID` / `TOSS_CLIENT_SECRET` / `TOSS_ACCOUNT` | 토스 시세·주문 | 합성 시장으로 대체 |
 | `KIWOOM_MODE` (`demo`/`real`) | 키움 모의투자 / 실계좌 | `demo` |
 | `APP_KEY_MOCK` / `APP_SECRET_MOCK` | 키움 모의투자 키 | 국내 주문 거절 |
@@ -133,6 +142,37 @@ selfcheck 가 이 경계를 지킨다 — 관측 팩 전체를 재귀로 훑어 
 `invest` 의 판단·전략층(`exits.py` `screener.py` `plan.py` `review.py` `analyst.py` `guard.py`
 `server.py` `fundamentals.py` `fx.py` `youtube.py`)은 옮기지 않았다. 사람이 쓴 매매 규칙이라
 이 랩의 전제와 정면으로 부딪힌다.
+
+## LLM 키가 없을 때
+
+판단 주체가 세 단계로 떨어진다. 어느 단계였는지는 모든 기록의 `brain` 필드에 남는다.
+
+| `brain` | 언제 | 무엇으로 판단하나 |
+|---|---|---|
+| `claude-opus-5` | `ANTHROPIC_API_KEY` 있음 | LLM 이 `policy.md` 를 들고 판단 |
+| `quant-fallback` | 키 없음 + 관측 팩에 퀀트 점수 있음 | **퀀트 점수 0~100** (매수 ≥65, 매도 <40) |
+| `offline-stub` | 키 없음 + 점수도 없음 | 결정론적 해시. **판단 아님 — 배선 점검용** |
+
+`quant-fallback` 은 스텁이 아니다. 실제로 규칙대로 매매한다 — 점수 높은 순으로 훑어 매수선을
+넘으면 사고, 보유 중 매도선 아래로 떨어지면 판다. 슬리브는 일변동성으로 가른다.
+
+**다만 이 셋(`AI_TRADER_QUANT_BUY`/`_SELL`/`_AGGRESSIVE_VOL`)은 사람이 정한 임계값이고,
+이 랩의 전제("사람이 전략을 안 쓴다")의 예외다.** 그래서 두 가지를 지킨다:
+
+- `quant-fallback` 기록은 `policy.md` 학습 근거로 **쓰이지 않는다**. 사람이 정한 임계값의
+  결과로 LLM 의 생각을 고치면 앞뒤가 안 맞는다.
+- LLM 이 "과거 내 판단"으로 되돌려받는 기록에서도 빠진다. 손절 가드레일(`guardrail`) 기록도 같다.
+
+`ANTHROPIC_API_KEY` 를 넣는 순간 판단 주체는 다시 LLM 하나가 되고, 임계값은 아예 읽히지 않는다.
+
+## 실계좌 장부 동기화
+
+`--live` 로 시작하면 사이클을 돌기 전에 증권사에서 보유·현금을 끌어와 내부 장부를 맞춘다.
+못 읽으면 **중단한다.** 내부 장부가 실계좌와 어긋나면 슬리브 회계·20% 상한·손절 -15% 가
+전부 허구 위에서 계산되기 때문이다. 모른 채로 실매매하지 않는다.
+
+슬리브는 증권사에 없는 개념이라 기존 장부의 배정을 유지하고, 처음 보는 종목은 `AGGRESSIVE`
+로 둔다(더 좁은 상한이 걸리는 쪽). 슬리브별 현금은 총현금을 사람이 정한 6:4 로 나눈다.
 
 ## 손절 -15% 와 벤치마크
 

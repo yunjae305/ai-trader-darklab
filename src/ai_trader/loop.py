@@ -12,8 +12,8 @@ def recent_history(feed, limit: int = 12) -> list[dict]:
     """과거 판단 + 그 뒤 실제로 가격이 어떻게 됐는지. 이것이 학습 신호다."""
     out = []
     for rec in journal.read("decisions", limit=limit * 3):
-        # 스텁이 만든 가짜 판단을 진짜 AI 의 '과거 내 판단'으로 먹이지 않는다
-        if str(rec.get("brain", "")).startswith("offline-stub"):
+        # LLM 이 내지 않은 기록(스텁·퀀트 대역·손절 가드레일)을 '과거 내 판단'으로 먹이지 않는다
+        if not brain.is_ai(rec.get("brain")):
             continue
         sym = rec.get("symbol")
         then = rec.get("price") or 0
@@ -145,8 +145,19 @@ def main(argv: list[str] | None = None) -> int:
     paper = not args.live
     broker = bk.make_broker(paper=paper)
     feed = data.make_feed(paper=paper, live_data=args.live_data)
-    print(f"[darklab] broker={broker.mode} feed={feed.source} "
-          f"brain={'claude' if C.have_brain_key() else 'OFFLINE-STUB(키 없음)'}")
+    if not paper:
+        # 내부 장부가 실계좌와 어긋나면 가드레일이 허구 위에서 계산된다. 시작 전에 맞춘다.
+        try:
+            synced = broker.sync()
+            print(f"[darklab] 실계좌 동기화: 보유 {synced['positions']}종목 "
+                  f"현금 {synced['cash']:,}원 {synced['by_market']}")
+        except Exception as exc:
+            journal.jot("incidents", {"kind": "sync_failed", "detail": str(exc)[:300]})
+            print(f"[darklab] 중단 — {exc}")
+            return 1
+
+    brain_name = C.BRAIN_MODEL if C.have_brain_key() else "quant-fallback(LLM 키 없음)"
+    print(f"[darklab] broker={broker.mode} feed={feed.source} brain={brain_name}")
 
     with journal.mlflow_run("darklab-loop", params={
             "broker": broker.mode, "feed": feed.source, "model": C.BRAIN_MODEL,

@@ -127,10 +127,78 @@ def _offline(snapshot: dict, observations: list[dict]) -> dict:
             "brain": "offline-stub", "usage": {}}
 
 
+# LLM 이 낸 판단이 아닌 brain 값들. 이 기록은 "과거 네 판단"으로 되먹이지 않는다.
+NOT_AI = ("offline-stub", "quant-fallback", "guardrail", "error:", "refusal")
+
+
+def is_ai(brain_name) -> bool:
+    return not str(brain_name or "").startswith(NOT_AI)
+
+
+def _quant_fallback(snapshot: dict, observations: list[dict]) -> dict:
+    """ANTHROPIC_API_KEY 가 없을 때 실제로 매매하는 경로.
+
+    이건 스텁이 아니다 — 이식해 온 퀀트 점수(quant.py)로 판단한다. LLM 키 없이도
+    프로그램이 무작위가 아니라 규칙대로 돌게 하는 것이 목적이다.
+
+    다만 이것은 **사람이 정한 임계값**이고, 이 랩의 전제(사람이 전략을 안 쓴다)와는 다르다.
+    그래서 기록에 brain='quant-fallback' 이 찍히고, policy.md 학습 근거로는 쓰이지 않는다.
+    ANTHROPIC_API_KEY 를 넣는 순간 판단 주체는 다시 LLM 하나가 된다.
+    """
+    buy_above = float(C.QUANT_BUY_ABOVE)
+    sell_below = float(C.QUANT_SELL_BELOW)
+    held = {p["symbol"]: p for p in snapshot["positions"]}
+    scored = []
+    for obs in observations:
+        q = obs.get("quant") or {}
+        if q.get("unavailable") or "score" not in q:
+            continue
+        scored.append((float(q["score"]), obs))
+    scored.sort(key=lambda x: -x[0])
+
+    decisions = []
+    for score, obs in scored:
+        sym = obs["symbol"]
+        price = _last_price(obs)
+        if sym in held:
+            if score < sell_below:
+                decisions.append({
+                    "symbol": sym, "action": "SELL", "sleeve": held[sym]["sleeve"],
+                    "quantity": held[sym]["qty"], "confidence": round((sell_below - score) / 100, 2),
+                    "reason": f"퀀트 {score:.0f}점 < 매도선 {sell_below:.0f} · "
+                              + " · ".join(q for q in (obs.get("quant") or {}).get("reasons", [])[:2])})
+            continue
+        if score < buy_above or price <= 0:
+            continue
+        # 변동성이 큰 종목을 공격 슬리브로. 슬리브 상한 안에서만 산다.
+        vol = (obs.get("observed") or {}).get("daily_vol_pct") or 0
+        sleeve = "AGGRESSIVE" if vol >= C.QUANT_AGGRESSIVE_VOL else "STABLE"
+        room = snapshot["sleeves"][sleeve]
+        budget = min(room["cash"], room["equity"] * C.MAX_POSITION_PCT * 0.9)
+        qty = int(budget // price)
+        if qty <= 0:
+            continue
+        decisions.append({
+            "symbol": sym, "action": "BUY", "sleeve": sleeve, "quantity": qty,
+            "confidence": round((score - buy_above) / max(100 - buy_above, 1), 2),
+            "reason": f"퀀트 {score:.0f}점 ≥ 매수선 {buy_above:.0f} · "
+                      + " · ".join((obs.get("quant") or {}).get("reasons", [])[:2])})
+        if len(decisions) >= C.MAX_ORDERS_PER_CYCLE:
+            break
+
+    top = ", ".join(f"{o['symbol']} {s:.0f}" for s, o in scored[:5])
+    return {"market_view": f"퀀트 점수 상위: {top}" if top else "점수를 낼 수 있는 종목이 없다",
+            "decisions": decisions, "lesson": "",
+            "brain": "quant-fallback", "usage": {}}
+
+
 def decide(snapshot: dict, observations: list[dict], history: list[dict] | None = None,
            policy_text: str | None = None) -> dict:
     """한 사이클의 판단을 돌려준다. 실패해도 예외를 던지지 않는다 — 랩은 멈추지 않는다."""
     if not C.have_brain_key():
+        # 관측 팩에 퀀트 점수가 있으면 그걸로 판단한다. 없으면(백테스트 배선 점검 등) 스텁.
+        if any((o.get("quant") or {}).get("score") is not None for o in observations):
+            return _quant_fallback(snapshot, observations)
         return _offline(snapshot, observations)
     try:
         import anthropic

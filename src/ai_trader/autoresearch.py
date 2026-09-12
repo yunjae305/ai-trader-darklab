@@ -83,8 +83,13 @@ def propose(current: str, evidence: dict) -> tuple[str, str]:
 
 
 def _real(rows: list[dict]) -> list[dict]:
-    """스텁이 남긴 기록은 근거가 아니다 — 정책을 고칠 때 쓰지 않는다."""
-    return [r for r in rows if not str(r.get("brain", "")).startswith("offline-stub")]
+    """LLM 이 내지 않은 기록은 근거가 아니다 — 정책을 고칠 때 쓰지 않는다.
+
+    스텁뿐 아니라 퀀트 대역(quant-fallback)과 손절 가드레일도 제외한다.
+    policy.md 는 LLM 의 생각이고, 사람이 정한 임계값의 결과로 그것을 고치면 앞뒤가 안 맞는다.
+    """
+    from . import brain
+    return [r for r in rows if brain.is_ai(r.get("brain"))]
 
 
 def evidence_pack(limit: int = 40) -> dict:

@@ -232,11 +232,49 @@ class PaperBroker:
 # 국내(6자리) → 키움, 해외(영문 티커) → 토스.
 # ---------------------------------------------------------------------------
 
+def _num(v) -> float:
+    """'+70,000' / '-1200' / None → float. 키움은 부호·콤마가 붙어 온다."""
+    if v is None:
+        return 0.0
+    if isinstance(v, (int, float)):
+        return abs(float(v))
+    s = str(v).strip().replace(",", "").lstrip("+")
+    try:
+        return abs(float(s)) if s else 0.0
+    except ValueError:
+        return 0.0
+
+
+def _first_list(body, *keys) -> list:
+    """응답에서 목록이 들어 있는 첫 키. 증권사마다 감싸는 이름이 달라서 필요하다."""
+    if isinstance(body, list):
+        return body
+    if not isinstance(body, dict):
+        return []
+    for k in keys:
+        v = body.get(k)
+        if isinstance(v, list):
+            return v
+        if isinstance(v, dict):
+            inner = _first_list(v, *keys)
+            if inner:
+                return inner
+    return []
+
+
 class Venue:
     market = ""
     name = ""
 
     def send(self, symbol: str, side: str, qty: int, price: float) -> dict:
+        raise NotImplementedError
+
+    def positions(self) -> list[dict]:
+        """실계좌 보유. [{symbol, qty, avg}] — 못 읽으면 예외를 던진다(빈 목록 아님)."""
+        raise NotImplementedError
+
+    def cash(self) -> float:
+        """주문 가능 현금."""
         raise NotImplementedError
 
     @staticmethod
@@ -284,12 +322,34 @@ class TossVenue(Venue):
             h["X-Tossinvest-Account"] = C.TOSS_ACCOUNT
         return h
 
-    def holdings(self) -> list[dict]:
+    def holdings(self) -> dict:
         r = self.session.get(f"{C.TOSS_BASE}/api/v1/holdings",
                              headers=self._headers(account=True), timeout=10)
         r.raise_for_status()
+        return r.json()
+
+    def positions(self) -> list[dict]:
+        body = self.holdings()
+        rows = _first_list(body, "items", "holdings", "result", "positions")
+        out = []
+        for row in rows:
+            sym = str(row.get("symbol") or row.get("stockCode") or "").strip()
+            qty = _num(row.get("quantity", row.get("qty")))
+            if not sym or qty <= 0:
+                continue
+            out.append({"symbol": sym, "qty": int(qty),
+                        "avg": _num(row.get("averagePurchasePrice",
+                                            row.get("avgPrice", row.get("purchasePrice"))))})
+        return out
+
+    def cash(self) -> float:
+        r = self.session.get(f"{C.TOSS_BASE}/api/v1/buying-power",
+                             headers=self._headers(account=True),
+                             params={"currency": "USD"}, timeout=10)
+        r.raise_for_status()
         body = r.json()
-        return body.get("holdings", body.get("result", []))
+        node = body.get("result", body)
+        return _num(node.get("cashBuyingPower", node.get("cash", node.get("amount"))))
 
     def send(self, symbol: str, side: str, qty: int, price: float) -> dict:
         if not C.LIVE_TRADING:
@@ -326,6 +386,23 @@ class KiwoomVenue(Venue):
             return ""
         return (f"KIWOOM_MODE={C.KIWOOM_MODE} 에 맞는 "
                 f"APP_KEY{C._KW_SUFFIX}/APP_SECRET{C._KW_SUFFIX} 없음")
+
+    def positions(self) -> list[dict]:
+        bal = self.api.balance()
+        rows = _first_list(bal, "acnt_evlt_remn_indv_tot", "output", "result")
+        out = []
+        for row in rows:
+            sym = str(row.get("stk_cd") or "").lstrip("A").strip()
+            qty = _num(row.get("rmnd_qty"))
+            if not sym or qty <= 0:
+                continue
+            out.append({"symbol": sym, "qty": int(qty), "avg": _num(row.get("pur_pric"))})
+        return out
+
+    def cash(self) -> float:
+        dep = self.api.deposit()
+        node = dep if isinstance(dep, dict) else {}
+        return _num(node.get("ord_alow_amt") or node.get("entr"))
 
     def send(self, symbol: str, side: str, qty: int, price: float) -> dict:
         if self.api.mode == "real" and not C.LIVE_TRADING:
@@ -368,6 +445,41 @@ class RoutedBroker(PaperBroker):
                                " / ".join(f"{m}: {w}" for m, w in self.blocked.items()))
         self.mode = "routed:" + "+".join(
             f"{m}={v.name}" for m, v in sorted(self.venues.items()))
+
+    def sync(self) -> dict:
+        """실계좌 잔고를 내부 장부로 끌어온다. 라이브 시작 전에 반드시 한 번 맞춘다.
+
+        내부 장부가 실계좌와 어긋나면 슬리브 회계·20% 상한·손절 -15% 가 전부 허구 위에서
+        계산된다. 그래서 한 창구라도 못 읽으면 예외를 던진다 — 모른 채로 실매매하지 않는다.
+
+        슬리브는 실계좌에 없는 개념이라 기존 장부의 배정을 유지하고, 처음 보는 종목은
+        변동성을 모르므로 AGGRESSIVE 로 둔다(더 보수적인 상한이 걸리는 쪽).
+        """
+        known = {s: p.sleeve for s, p in self.positions.items()}
+        positions, cash_by_market, failed = {}, {}, {}
+        for market, venue in self.venues.items():
+            try:
+                rows = venue.positions()
+                cash_by_market[market] = venue.cash()
+            except Exception as exc:
+                failed[market] = f"{type(exc).__name__}: {str(exc)[:160]}"
+                continue
+            for row in rows:
+                sym = row["symbol"]
+                sleeve = known.get(sym, "AGGRESSIVE")
+                positions[sym] = Position(sym, sleeve, int(row["qty"]), float(row["avg"]))
+        if failed:
+            raise RuntimeError("실계좌 잔고를 못 읽었다 — 장부를 맞추지 못한 채로는 실매매하지 않는다: "
+                               + " / ".join(f"{m}: {w}" for m, w in failed.items()))
+
+        self.positions = positions
+        total_cash = sum(cash_by_market.values())
+        # 슬리브별 현금은 증권사가 모른다. 사람이 정한 6:4 비율로 나눈다.
+        self.cash = {k: total_cash * w for k, w in C.SLEEVES.items()}
+        if self.day_start_equity <= 0:
+            self.day_start_equity = self.equity({s: p.avg for s, p in positions.items()})
+        return {"positions": len(positions), "cash": round(total_cash),
+                "by_market": {m: round(c) for m, c in cash_by_market.items()}}
 
     def venue_for(self, symbol: str) -> Venue:
         market = C.market_of(symbol)

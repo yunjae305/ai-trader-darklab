@@ -9,6 +9,28 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_env(path: Path | None = None) -> bool:
+    """`.env` 를 환경변수로 올린다. python-dotenv 없이 stdlib 만 쓴다.
+
+    이 파일의 상수들이 import 시점에 os.getenv 로 읽히므로, 로딩은 그 전에 끝나야 한다.
+    이미 설정된 값은 덮지 않는다 — 셸에서 준 값이 파일보다 우선이다.
+    """
+    path = Path(path) if path else ROOT / ".env"
+    if not path.exists():
+        return False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+    return True
+
+
+ENV_LOADED = _load_env()
+
 RESEARCH = ROOT / "research"
 LAB = ROOT / "lab"
 POLICY = LAB / "policy.md"
@@ -28,6 +50,13 @@ MAX_ORDERS_PER_CYCLE = int(os.getenv("AI_TRADER_MAX_ORDERS", "8"))
 STOP_LOSS_PCT = float(os.getenv("AI_TRADER_STOP_LOSS", "-15.0"))
 # 이겨야 하는 대상. 성과는 이 지수 대비 초과수익으로 잰다.
 BENCHMARK = os.getenv("AI_TRADER_BENCHMARK", "^GSPC")  # S&P500
+
+# --- LLM 키가 없을 때의 판단 임계값 (quant-fallback 전용) ---
+# 이 랩의 전제는 '사람이 전략을 안 쓴다'이고 이 세 값은 그 예외다. ANTHROPIC_API_KEY 가
+# 있으면 아예 쓰이지 않는다. 원본(invest/quant.py)의 매수선 65를 그대로 가져왔다.
+QUANT_BUY_ABOVE = float(os.getenv("AI_TRADER_QUANT_BUY", "65"))
+QUANT_SELL_BELOW = float(os.getenv("AI_TRADER_QUANT_SELL", "40"))
+QUANT_AGGRESSIVE_VOL = float(os.getenv("AI_TRADER_QUANT_AGGRESSIVE_VOL", "2.5"))  # 일변동성 %
 LIVE_TRADING = os.getenv("AI_TRADER_LIVE", "0") == "1"  # 1 이어야만 실주문
 
 # --- 관찰 대상 유니버스. AI 가 이 안에서 스스로 고른다(선정도 AI 몫). ---
