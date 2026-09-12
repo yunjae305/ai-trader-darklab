@@ -161,11 +161,20 @@ def stop_loss_is_a_boundary_not_a_suggestion():
     assert not b.stop_loss_breaches({}), "가격 없이 손절을 집행했다"
     assert not b.stop_loss_breaches({"005930": 0}), "가격 0 으로 손절을 집행했다"
 
-    # 루프가 실제로 정리하는지 (brain 호출 없이)
-    out = loop.enforce_stop_loss(b, {"005930": 85_000})
-    assert out and out[0]["status"] == "FILLED", f"손절 매도가 안 나갔다: {out}"
-    assert "005930" not in b.positions, "손절했는데 보유가 남았다"
-    assert out[0]["brain"] == "guardrail", "손절이 AI 판단으로 기록됐다"
+    # 루프가 실제로 정리하는지 (brain 호출 없이).
+    # enforce_stop_loss 는 저널에 쓴다 — 테스트가 진짜 거래 기록을 오염시키면 안 되므로 되돌린다.
+    before = {s: len(journal.read(s)) for s in ("decisions", "incidents")}
+    try:
+        out = loop.enforce_stop_loss(b, {"005930": 85_000})
+        assert out and out[0]["status"] == "FILLED", f"손절 매도가 안 나갔다: {out}"
+        assert "005930" not in b.positions, "손절했는데 보유가 남았다"
+        assert out[0]["brain"] == "guardrail", "손절이 AI 판단으로 기록됐다"
+    finally:
+        for stream, kept in before.items():
+            path = C.RESEARCH / f"{stream}.jsonl"
+            if path.exists():
+                lines = path.read_text(encoding="utf-8").splitlines()[:kept]
+                path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
 
 def buy_sell_hold_are_all_reachable():

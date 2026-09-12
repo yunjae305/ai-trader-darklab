@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>AI 주식 자동매매 · 다크랩</title>
+<style>
+:root{
+  --bg:#EDE7DE; --card:#FBF9F5; --tile:#EFE9E0; --ink:#15130F; --dim:#8A8377;
+  --line:#DED6C9; --green:#0B9E77; --red:#E5484D; --amber:#E8892B; --nav:#221F1A;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard",system-ui,sans-serif;
+  padding:0 0 86px}
+.wrap{max-width:560px;margin:0 auto;padding:0 16px}
+h1{font-size:26px;margin:18px 0 2px;letter-spacing:-.5px}
+.sub{color:var(--dim);font-size:13px;margin:0 0 14px}
+.card{background:var(--card);border-radius:18px;padding:18px;margin:0 0 14px;
+  box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.card h2{font-size:19px;margin:0 0 2px;letter-spacing:-.3px}
+.card .cap{color:var(--dim);font-size:13px;margin:0 0 14px}
+.eyebrow{font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:2px;color:var(--dim);margin-bottom:8px}
+.big{font-size:34px;font-weight:700;letter-spacing:-1px;margin:0}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.tile{background:var(--tile);border-radius:14px;padding:14px}
+.tile .k{font-size:12px;color:var(--dim);display:flex;align-items:center;gap:6px}
+.tile .v{font-size:21px;font-weight:700;margin:6px 0 2px;letter-spacing:-.5px;word-break:break-all}
+.tile .n{font-size:11px;color:var(--dim)}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.up{color:var(--red)} .down{color:#2D6FE0} .flat{color:var(--dim)}
+.pos{color:var(--green)} .neg{color:var(--red)}
+.row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;
+  padding:13px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.badge{font:700 11px/1 system-ui;padding:7px 10px;border-radius:8px;letter-spacing:.5px}
+.b-BUY{background:#DFF3EB;color:#08795C} .b-SELL{background:#FBE3E4;color:#C0353A}
+.b-HOLD{background:#FBE7D4;color:#C46A16}
+.st{font-size:11px;padding:3px 7px;border-radius:6px;background:var(--tile);color:var(--dim)}
+.st-FILLED{background:#DFF3EB;color:#08795C} .st-REJECTED{background:#FBE3E4;color:#C0353A}
+.st-ERROR{background:#FBE3E4;color:#C0353A}
+.nm{font-weight:700;font-size:16px} .cd{color:var(--dim);font-size:13px;font-family:ui-monospace,Menlo,monospace}
+.why{color:var(--dim);font-size:13px;margin-top:5px}
+.ring{width:44px;height:44px;flex:0 0 44px;border-radius:50%;display:grid;place-items:center;
+  font-weight:700;font-size:13px}
+.scroll{display:flex;gap:10px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
+.scroll::-webkit-scrollbar{display:none}
+.ix{background:var(--tile);border-radius:14px;padding:13px 16px;min-width:132px;flex:0 0 auto}
+.ix .k{font-size:12px;color:var(--dim)} .ix .v{font:700 19px ui-monospace,Menlo,monospace;margin:5px 0 3px}
+.none{color:var(--dim);font-size:13px;background:var(--tile);border-radius:12px;padding:13px;margin-top:8px}
+nav{position:fixed;left:0;right:0;bottom:0;background:rgba(240,235,227,.96);
+  backdrop-filter:blur(12px);border-top:1px solid var(--line);padding:8px 10px calc(8px + env(safe-area-inset-bottom))}
+nav .in{max-width:560px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+nav button{border:0;background:transparent;color:var(--dim);font:600 12px system-ui;
+  padding:9px 4px;border-radius:13px;display:grid;gap:3px;justify-items:center;cursor:pointer}
+nav button.on{background:var(--nav);color:#F6F2EA}
+nav svg{width:19px;height:19px}
+.tab{display:none} .tab.on{display:block}
+.hd{display:flex;justify-content:space-between;align-items:center;margin:18px 0 12px}
+.rf{width:44px;height:44px;border-radius:50%;border:0;background:var(--card);font-size:19px;cursor:pointer}
+.pulse{width:14px;height:14px;border-radius:50%;box-shadow:0 0 0 6px rgba(229,72,77,.14)}
+.bar{height:7px;background:var(--tile);border-radius:99px;overflow:hidden;margin:9px 0 5px}
+.bar i{display:block;height:100%;background:var(--green)}
+.kv{display:flex;justify-content:space-between;padding:9px 0;border-top:1px solid var(--line);font-size:14px}
+.kv:first-child{border-top:0} .kv b{font-weight:700}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.warn{background:#FBE7D4;color:#8A4A08;border-radius:12px;padding:12px;font-size:13px;margin-bottom:12px}
+.t{font-size:12px;color:var(--dim);font-family:ui-monospace,Menlo,monospace;flex:0 0 auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hd">
+    <div><h1>AI 주식 자동매매</h1><p class="sub" id="sub">다크랩 — 조회 전용</p></div>
+    <button class="rf" onclick="loadAll(true)">⟳</button>
+  </div>
+
+  <section id="tab-command" class="tab on"></section>
+  <section id="tab-radar" class="tab"></section>
+  <section id="tab-portfolio" class="tab"></section>
+  <section id="tab-control" class="tab"></section>
+</div>
+
+<nav><div class="in">
+  <button class="on" data-tab="command"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>Command</button>
+  <button data-tab="radar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg>Radar</button>
+  <button data-tab="portfolio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l6.4 4.2"/></svg>Portfolio</button>
+  <button data-tab="control"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h12M19 7h2M3 17h6M13 17h8"/><circle cx="17" cy="7" r="2"/><circle cx="11" cy="17" r="2"/></svg>Control</button>
+</div></nav>
+
+<script>
+const T = new URLSearchParams(location.search).get('t') || '';
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+const won = n => n == null ? '—' : Number(n).toLocaleString('ko-KR') + '원';
+const pct = n => n == null ? '—' : (n > 0 ? '+' : '') + Number(n).toFixed(2) + '%';
+const cls = n => n == null ? 'flat' : n > 0 ? 'up' : n < 0 ? 'down' : 'flat';
+const hhmm = ts => ts ? String(ts).slice(5, 16).replace('T', ' ') : '';
+
+async function api(path) {
+  const r = await fetch(path + '?t=' + encodeURIComponent(T));
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+  return r.json();
+}
+const none = (msg) => `<div class="none">${esc(msg)}</div>`;
+
+function card(title, cap, body) {
+  return `<div class="card"><h2>${esc(title)}</h2><p class="cap">${esc(cap)}</p>${body}</div>`;
+}
+
+/* ---------------------------------------------------------------- Command */
+function renderCommand(d) {
+  const lab = d.lab, c = d.last_cycle, g = d.guardrails;
+  const open = lab.market_open;
+  const desk = `<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start">
+      <div>
+        <div class="eyebrow">LIVE MARKET DESK</div>
+        <p class="big">${open ? '장 운영중' : '장 마감'}</p>
+        <p class="sub mono" style="margin:4px 0 0">${esc(d.generated_at)}</p>
+      </div>
+      <div class="pulse" style="background:${open ? 'var(--green)' : 'var(--red)'}"></div>
+    </div>
+    ${lab.source === 'synthetic'
+      ? `<div class="warn" style="margin-top:14px">합성 시장으로 돌고 있다 — 토스 키가 없다. 이 숫자는 실제 시세가 아니다.</div>` : ''}
+    ${!d.has_llm_key
+      ? `<div class="warn" style="margin-top:${lab.source === 'synthetic' ? '0' : '14px'}">ANTHROPIC_API_KEY 없음 — 퀀트 점수로 매매 중 (brain=quant-fallback)</div>` : ''}
+    <div class="tiles">
+      <div class="tile"><div class="k"><i class="dot" style="background:var(--green)"></i>총 평가</div>
+        <div class="v">${won(lab.equity)}</div><div class="n">모드 ${esc(lab.mode)}</div></div>
+      <div class="tile"><div class="k"><i class="dot" style="background:var(--red)"></i>당일 손익</div>
+        <div class="v ${cls(lab.day_return_pct)}">${pct(lab.day_return_pct)}</div>
+        <div class="n">기준 ${won(lab.day_start_equity)}</div></div>
+      <div class="tile"><div class="k"><i class="dot" style="background:var(--green)"></i>예수금</div>
+        <div class="v">${won(Object.values(lab.sleeves).reduce((a, s) => a + s.cash, 0))}</div>
+        <div class="n">안정+공격 합산</div></div>
+      <div class="tile"><div class="k"><i class="dot" style="background:var(--amber)"></i>오픈 포지션</div>
+        <div class="v">${lab.positions.length}</div><div class="n">보유 종목</div></div>
+    </div></div>`;
+
+  const ctrl = card('AI Trading 컨트롤', '가드레일과 주기', `
+    <div class="tiles" style="grid-template-columns:repeat(3,1fr);margin-top:0">
+      <div class="tile"><div class="n">Mode</div><div class="v" style="font-size:16px">${lab.halted ? 'HALTED' : 'AUTO'}</div></div>
+      <div class="tile"><div class="n">Risk</div><div class="v" style="font-size:16px">${g.live_trading ? 'LIVE' : 'ARMED'}</div></div>
+      <div class="tile"><div class="n">Universe</div><div class="v" style="font-size:16px">${g.universe}</div></div>
+    </div>
+    <div class="kv" style="margin-top:12px"><span>사이클 주기</span><b>${Math.round(g.cycle_seconds / 60)}분</b></div>
+    <div class="kv"><span>손절</span><b class="neg">${g.stop_loss_pct}%</b></div>
+    <div class="kv"><span>당일 정지선</span><b class="neg">${g.daily_loss_kill_pct}%</b></div>
+    <div class="kv"><span>종목당 상한</span><b>${g.max_position_pct}%</b></div>
+    ${c ? `<div class="kv"><span>마지막 사이클</span><b class="mono">${hhmm(c.ts)}</b></div>` : ''}`);
+
+  const stats = card('Strategy Stats', '판단 주체별 누적 성과',
+    d.strategy_stats.length ? `<div class="scroll">${d.strategy_stats.map(s => `
+      <div class="ix" style="min-width:190px">
+        <div class="k">${esc(s.name)}${s.is_ai ? '' : ' · 대역'}</div>
+        <div class="v ${cls(s.last_return_pct)}">${pct(s.last_return_pct)}</div>
+        <div class="n">${s.days}일 · ${esc(s.source || '')} · 주문 ${s.trades ?? 0}건</div>
+        <div class="n" style="margin-top:6px">MDD ${s.last_mdd_pct ?? '—'}% · 손절 ${s.stop_loss_exits ?? 0}건</div>
+        <div class="n">vs ${esc(d.guardrails.benchmark)} ${s.alpha_pct == null ? '—'
+          : `<b class="${s.beat_benchmark ? 'pos' : 'neg'}">${pct(s.alpha_pct)}</b>`}</div>
+      </div>`).join('')}</div>`
+      : none('백테스트 기록이 없다 — python3 -m ai_trader.backtest'));
+
+  const idx = card('Market Index', '지수와 환율', `<div class="scroll">${d.indices.map(i => `
+    <div class="ix"><div class="k">${esc(i.name)}</div>
+      ${i.unavailable ? `<div class="v" style="font-size:14px;color:var(--dim)">—</div><div class="n">${esc(i.unavailable)}</div>`
+        : `<div class="v">${Number(i.last).toLocaleString('ko-KR')}</div>
+           <div class="n ${cls(i.change_pct)}">${i.change_pct > 0 ? '▲' : '▼'} ${pct(i.change_pct)}</div>`}
+    </div>`).join('')}</div>`);
+
+  const ai = card('AI Analysis', '최근 분석과 주문 판단',
+    d.ai_analysis.length ? d.ai_analysis.map(a => `
+      <div class="row">
+        <span class="badge b-${esc(a.action || 'HOLD')}">${esc(a.action || 'HOLD')}</span>
+        <div style="flex:1;min-width:0">
+          <div><span class="nm">${esc(a.name)}</span> <span class="cd">${esc(a.symbol)}</span></div>
+          <div class="why">${esc(a.reason).slice(0, 180)}</div>
+          <div class="why mono" style="font-size:11px">${hhmm(a.ts)} · ${esc(a.brain || '')}</div>
+        </div>
+        <b class="${a.status === 'FILLED' ? 'pos' : 'flat'}">${a.confidence == null ? '' : Math.round(a.confidence * 100) + '%'}</b>
+      </div>`).join('')
+      : none('판단 기록이 없다 — python3 -m ai_trader.loop --paper --once'));
+
+  const insight = card('Market Insight', '실시간 뉴스 헤드라인',
+    d.news.length ? d.news.map(n => `
+      <div class="row"><div style="flex:1;min-width:0">
+        <div class="cd">${esc(n.name)}</div>
+        <div style="font-weight:600;margin-top:3px">${esc(n.title)}</div>
+        <div class="why mono" style="font-size:11px">${esc(n.published).slice(0, 22)}</div>
+      </div></div>`).join('')
+      : none('뉴스를 못 받았다 — 네트워크를 확인하라'));
+
+  const inc = d.incidents.length ? card('Incidents', '킬스위치·손절·오류',
+    d.incidents.map(i => `<div class="row"><span class="t">${hhmm(i.ts)}</span>
+      <div style="flex:1"><b>${esc(i.kind)}</b>
+      <div class="why">${esc(i.detail || i.symbol || i.status || '')}</div></div></div>`).join('')) : '';
+
+  $('tab-command').innerHTML = desk + ctrl + stats + idx + ai + insight + inc;
+}
+
+/* ------------------------------------------------------------------ Radar */
+function renderRadar(d) {
+  const ring = s => {
+    if (s == null) return `<div class="ring" style="background:var(--tile);color:var(--dim)">—</div>`;
+    const col = s >= d.buy_above ? 'var(--green)' : s < d.sell_below ? 'var(--red)' : 'var(--amber)';
+    return `<div class="ring" style="background:conic-gradient(${col} ${s * 3.6}deg,var(--tile) 0);color:var(--ink)">
+      <span style="background:var(--card);width:34px;height:34px;border-radius:50%;display:grid;place-items:center">${Math.round(s)}</span></div>`;
+  };
+  $('tab-radar').innerHTML = card('Live Radar', `퀀트 점수 순위 · 매수선 ${d.buy_above} / 매도선 ${d.sell_below} · ${d.source}`,
+    d.rows.map(r => `<div class="row">${ring(r.score)}
+      <div style="flex:1;min-width:0">
+        <div><span class="nm">${esc(r.name)}</span> <span class="cd">${esc(r.symbol)}</span>
+          <span class="st">${esc(r.market)}</span></div>
+        <div class="why">${r.unavailable ? esc(r.unavailable)
+          : `${esc(r.alignment || '')} · RSI ${r.rsi == null ? '—' : Math.round(r.rsi)} ${esc(r.rsi_zone || '')} · ADX ${esc(r.adx || '—')} · 매물대 ${esc(r.room || '—')}`}</div>
+        <div class="why" style="font-size:11px">${esc((r.reasons || []).join(' · ')).slice(0, 150)}</div>
+      </div>
+      <div style="text-align:right;flex:0 0 auto">
+        <div class="mono" style="font-weight:700">${r.last == null ? '—' : Number(r.last).toLocaleString('ko-KR')}</div>
+        <div class="${cls(r.chg_1d_pct)}" style="font-size:13px">${pct(r.chg_1d_pct)}</div>
+      </div></div>`).join(''));
+}
+
+/* -------------------------------------------------------------- Portfolio */
+function renderPortfolio(p, t) {
+  const s = p.snapshot, dv = p.diversification;
+  const sleeves = Object.entries(s.sleeves).map(([k, v]) => `
+    <div class="tile"><div class="k">${k} · 목표 ${Math.round(v.target_weight * 100)}%</div>
+      <div class="v">${won(v.equity)}</div>
+      <div class="n">현금 ${won(v.cash)} · 실현 <b class="${v.realized_pnl >= 0 ? 'pos' : 'neg'}">${won(v.realized_pnl)}</b></div></div>`).join('');
+
+  const pos = s.positions.length ? s.positions.map(x => `
+    <div class="row"><div style="flex:1">
+      <div><span class="nm">${esc(x.symbol)}</span> <span class="st">${esc(x.sleeve)}</span></div>
+      <div class="why mono">${x.qty}주 · 평단 ${Number(x.avg_price).toLocaleString('ko-KR')} → ${Number(x.last_price).toLocaleString('ko-KR')}</div>
+    </div><div style="text-align:right">
+      <div class="mono" style="font-weight:700">${won(x.value)}</div>
+      <div class="${x.unrealized_pct >= 0 ? 'pos' : 'neg'}">${pct(x.unrealized_pct)}</div>
+    </div></div>`).join('') : none('보유 종목이 없다');
+
+  const divBody = dv.unavailable ? none(dv.unavailable) : dv.note ? none(dv.note) : `
+    <div class="kv"><span>실질 분산 (덩어리/종목)</span><b>${dv.effective_groups}/${dv.symbols}</b></div>
+    <div class="kv"><span>판정</span><b>${esc(dv.concentration || '—')}</b></div>
+    ${(dv.highest_pairs || []).map(x => `<div class="kv"><span class="mono">${esc(x.pair)}</span><b>${x.corr}</b></div>`).join('')}`;
+
+  const log = t.rows.length ? t.rows.map(r => `
+    <div class="row"><span class="t">${hhmm(r.ts)}</span>
+      <span class="badge b-${esc(r.action)}">${esc(r.action)}</span>
+      <div style="flex:1;min-width:0">
+        <div><span class="nm" style="font-size:15px">${esc(r.name)}</span>
+          <span class="st st-${esc(r.status)}">${esc(r.status)}</span>
+          ${r.forced ? '<span class="st" style="background:#FBE3E4;color:#C0353A">손절</span>' : ''}</div>
+        <div class="why mono">${r.quantity}주 @ ${Number(r.price || 0).toLocaleString('ko-KR')}
+          ${r.realized_pnl != null ? ` · 실현 <b class="${r.realized_pnl >= 0 ? 'pos' : 'neg'}">${won(r.realized_pnl)}</b>` : ''}</div>
+        <div class="why">${esc(r.rejected || r.reason || '').slice(0, 140)}</div>
+      </div></div>`).join('') : none('거래 기록이 없다 — 루프를 한 번 돌려라');
+
+  $('tab-portfolio').innerHTML =
+    card('Portfolio', `총 ${won(s.equity)} · 당일 ${pct(s.day_return_pct)}`,
+      `<div class="tiles" style="margin-top:0">${sleeves}</div>`) +
+    card('보유 종목', `${s.positions.length}종목`, pos) +
+    card('분산', '같이 움직이는가', divBody) +
+    card('실시간 거래 기록', `최근 ${t.rows.length}건 · 체결·거부·손절 전부`, log);
+}
+
+/* ---------------------------------------------------------------- Control */
+function renderControl(d) {
+  const mark = m => m === '✓' ? 'pos' : m === '✗' ? 'neg' : 'flat';
+  $('tab-control').innerHTML =
+    card('연결 점검', '조회만 한다 — 주문은 내지 않는다',
+      d.checks.map(c => `<div class="row"><b class="${mark(c.mark)}" style="font-size:17px">${c.mark}</b>
+        <div style="flex:1"><b>${esc(c.label)}</b><div class="why">${esc(c.detail)}</div></div></div>`).join('')) +
+    card('사람이 정한 경계', 'AI 가 바꿀 수 없는 값', `
+      <div class="kv"><span>슬리브</span><b>안정 ${d.guardrails.sleeves.STABLE * 100}% : 공격 ${d.guardrails.sleeves.AGGRESSIVE * 100}%</b></div>
+      <div class="kv"><span>종목당 상한</span><b>${d.guardrails.max_position_pct}%</b></div>
+      <div class="kv"><span>손절</span><b class="neg">${d.guardrails.stop_loss_pct}%</b></div>
+      <div class="kv"><span>당일 정지</span><b class="neg">${d.guardrails.daily_loss_kill_pct}%</b></div>
+      <div class="kv"><span>사이클당 최대 주문</span><b>${d.guardrails.max_orders_per_cycle}건</b></div>
+      <div class="kv"><span>벤치마크</span><b>${esc(d.guardrails.benchmark)}</b></div>
+      <div class="kv"><span>실주문</span><b class="${d.guardrails.live_trading ? 'neg' : 'pos'}">${d.guardrails.live_trading ? '허용 (AI_TRADER_LIVE=1)' : '차단'}</b></div>
+      <div class="kv"><span>.env</span><b>${d.env_loaded ? '로드됨' : '없음'}</b></div>`) +
+    card('유니버스', `${d.universe.length}종목 · 관찰 대상`,
+      d.universe.map(u => `<div class="kv"><span><b>${esc(u.name)}</b> <span class="cd">${esc(u.symbol)}</span></span>
+        <span class="st">${esc(u.market)}</span></div>`).join('')) +
+    card('없는 화면', '데이터원이 없어 만들지 않은 것', none(
+      'DART 재무제표(상세실적) — 전자공시 API 연동이 이 레포에 없다. 숫자를 지어내지 않기 위해 화면을 만들지 않았다. ' +
+      '섹터 분류도 같은 이유로 없다.'));
+}
+
+/* ------------------------------------------------------------------- boot */
+async function loadAll(force) {
+  const set = (id, html) => $(id).innerHTML = html;
+  try {
+    renderCommand(await api('/api/command'));
+  } catch (e) { set('tab-command', none('불러오기 실패: ' + e.message)); }
+  try {
+    renderRadar(await api('/api/radar'));
+  } catch (e) { set('tab-radar', none('불러오기 실패: ' + e.message)); }
+  try {
+    renderPortfolio(await api('/api/portfolio'), await api('/api/trades'));
+  } catch (e) { set('tab-portfolio', none('불러오기 실패: ' + e.message)); }
+  try {
+    renderControl(await api('/api/control'));
+  } catch (e) { set('tab-control', none('불러오기 실패: ' + e.message)); }
+  $('sub').textContent = '다크랩 — 조회 전용 · ' + new Date().toLocaleTimeString('ko-KR');
+}
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.id === 'tab-' + b.dataset.tab));
+  scrollTo(0, 0);
+});
+loadAll();
+setInterval(loadAll, 60000);
+</script>
+</body>
+</html>

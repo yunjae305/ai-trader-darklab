@@ -29,6 +29,8 @@ cp .env.example .env   # 키를 넣는다. 없어도 전 구간이 돈다.
 export PYTHONPATH=src
 
 python3 -m ai_trader.check   # 무엇이 되고 무엇이 안 되는지 먼저 본다 (조회만, 주문 안 냄)
+
+python3 -m ai_trader.dashboard --lan   # 폰에서 보는 대시보드 (조회 전용)
 ```
 
 `.env` 는 `config.py` 가 import 시점에 자동으로 읽는다. 셸에 이미 있는 값이 파일보다 우선이다.
@@ -142,6 +144,32 @@ selfcheck 가 이 경계를 지킨다 — 관측 팩 전체를 재귀로 훑어 
 `invest` 의 판단·전략층(`exits.py` `screener.py` `plan.py` `review.py` `analyst.py` `guard.py`
 `server.py` `fundamentals.py` `fx.py` `youtube.py`)은 옮기지 않았다. 사람이 쓴 매매 규칙이라
 이 랩의 전제와 정면으로 부딪힌다.
+
+## 대시보드
+
+```bash
+python3 -m ai_trader.dashboard          # 127.0.0.1:8765 (이 PC 만)
+python3 -m ai_trader.dashboard --lan    # 같은 와이파이의 폰에서 접속
+```
+
+stdlib 만 쓴다 — 빌드 도구도 프레임워크도 CDN 도 없다. 실행하면 토큰이 박힌 주소가 뜬다
+(`AI_TRADER_DASH_TOKEN` 으로 고정 가능). 계좌 잔고가 보이므로 토큰 없이는 API 가 401 이다.
+
+**조회 전용이다. 여기서 주문이 나가지 않는다** — 판단은 루프가 하고 이 화면은 그 기록을 읽는다.
+
+| 탭 | 내용 | 데이터원 |
+|---|---|---|
+| Command | 라이브 데스크(평가·손익·예수금·포지션), 가드레일, 전략별 성과, 지수·환율, AI 판단과 근거, 뉴스, 인시던트 | `lab/paper_state.json`, `research/{cycles,decisions,backtests,incidents}.jsonl`, `benchmark.quotes()`, `data.news()` |
+| Radar | 퀀트 점수 순위 + 지표(RSI·정배열·ADX·매물대) | `data.observe()` |
+| Portfolio | 슬리브별 자산, 보유 종목, 상관관계, **실시간 거래 기록**(체결·거부·손절) | `paper_state.json`, `decisions.jsonl`, `correlation` |
+| Control | 연결 점검, 사람이 정한 경계, 유니버스 | `check.describe()`, `config` |
+
+거래 기록은 체결(`FILLED`)·거부(`REJECTED`)·오류(`ERROR`)를 한 타임라인에 담고, 손절
+가드레일이 낸 주문은 따로 표시된다(`brain=guardrail`).
+
+**만들지 않은 화면이 있다.** 첨부받은 화면 중 DART 재무제표(상세실적)와 섹터 분류는 이 레포에
+데이터원이 없다. 숫자를 지어내지 않으려고 화면 자체를 만들지 않고, Control 탭에 그 사실을 적었다.
+지수·환율은 못 받으면 0 이 아니라 `unavailable` 로 표시된다.
 
 ## LLM 키가 없을 때
 

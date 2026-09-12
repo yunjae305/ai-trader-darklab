@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import time
+
 import pandas as pd
 
 from . import config as C
@@ -74,6 +76,36 @@ def alpha(equity_curve: list[float], days: int = None, end=None, symbol: str = N
         "alpha_pct": round(mine - theirs, 3),
         "beat_benchmark": mine > theirs,
     }
+
+
+# 대시보드가 보여주는 지수·환율. 매매에 쓰이지 않는다 — 사람이 보는 배경이다.
+INDICES = [("KOSPI", "^KS11"), ("S&P500", "^GSPC"), ("USD/KRW", "KRW=X"), ("JPY/KRW", "JPYKRW=X")]
+
+_QUOTE_CACHE: tuple[float, list] = (0.0, [])
+
+
+def quotes(ttl: int = 300) -> list[dict]:
+    """지수·환율 현재가와 전일 대비. 못 받으면 0 으로 채우지 않고 unavailable 로 남긴다."""
+    global _QUOTE_CACHE
+    if _QUOTE_CACHE[1] and time.time() - _QUOTE_CACHE[0] < ttl:
+        return _QUOTE_CACHE[1]
+    out = []
+    try:
+        import yfinance as yf
+        raw = yf.download([s for _, s in INDICES], period="7d", interval="1d",
+                          progress=False, auto_adjust=False, group_by="ticker")
+        for name, sym in INDICES:
+            try:
+                closes = raw[sym]["Close"].dropna()
+                last, prev = float(closes.iloc[-1]), float(closes.iloc[-2])
+                out.append({"name": name, "symbol": sym, "last": round(last, 2),
+                            "change_pct": round((last - prev) / prev * 100, 2)})
+            except Exception:
+                out.append({"name": name, "symbol": sym, "unavailable": "응답 없음"})
+    except Exception as exc:
+        out = [{"name": n, "symbol": s, "unavailable": type(exc).__name__} for n, s in INDICES]
+    _QUOTE_CACHE = (time.time(), out)
+    return out
 
 
 def main(argv=None) -> int:
