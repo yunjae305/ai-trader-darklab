@@ -3,7 +3,9 @@
     python3 -m ai_trader.dashboard          127.0.0.1:8765 (이 PC 만)
     python3 -m ai_trader.dashboard --lan    0.0.0.0:8765   (같은 와이파이의 폰에서)
 
-조회 전용이다. 여기서 주문을 내지 않는다 — 판단은 루프가 하고, 이 화면은 그 기록을 읽는다.
+화면은 기록을 읽고, 버튼은 매매 루프를 띄우고 세운다. 주문 자체는 여기서 만들지 않는다 —
+무엇을 사고 팔지는 루프가 정하고, 실주문이 나가는지는 AI_TRADER_LIVE 가 정한다.
+버튼은 그 환경변수를 바꾸지 못한다.
 계좌 잔고가 보이므로 토큰을 요구한다. AI_TRADER_DASH_TOKEN 이 없으면 실행할 때 만들어 띄운다.
 
 데이터가 없는 항목은 빈 값이 아니라 이유와 함께 내려간다. 화면이 "0원"이라고 적는 것과
@@ -24,7 +26,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import (benchmark, brain, broker as bk, config as C, correlation,
-               data, journal, news)
+               data, engine, journal, news)
 
 WEB = Path(__file__).resolve().parent / "web"
 TOKEN = os.getenv("AI_TRADER_DASH_TOKEN") or secrets.token_urlsafe(9)
@@ -232,6 +234,7 @@ def command_state() -> dict:
         "has_llm_key": C.have_brain_key(),
         "guardrails": guardrails(),
         "strategy_stats": strategy_stats(),
+        "engine": engine.status(),
         "indices": cached("indices", 300, benchmark.quotes),
         "ai_analysis": ai_analysis(),
         "incidents": incidents[::-1],
@@ -249,8 +252,16 @@ def control_state() -> dict:
                           "name": data.NAMES.get(s, s)} for s in C.UNIVERSE]}
 
 
+# 상태를 바꾸는 것은 POST 로만 받는다. 링크를 여는 것만으로 매매가 시작되면 안 된다.
+ACTIONS = {
+    "/api/engine/start": engine.start,
+    "/api/engine/stop": engine.stop,
+    "/api/engine/once": engine.run_once,
+}
+
 ROUTES = {
     "/api/command": lambda: command_state(),
+    "/api/engine": lambda: engine.status(),
     "/api/radar": lambda: cached("radar", 120, radar),
     "/api/trades": lambda: {"rows": trades()},
     "/api/portfolio": lambda: portfolio(),
@@ -275,6 +286,25 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, code: int, obj):
         self._send(code, json.dumps(obj, ensure_ascii=False, default=str).encode(),
                    "application/json; charset=utf-8")
+
+    def _token_ok(self, url) -> bool:
+        token = (parse_qs(url.query).get("t") or [""])[0] or self.headers.get("X-Dash-Token", "")
+        return secrets.compare_digest(token, TOKEN)
+
+    def do_POST(self):
+        url = urlparse(self.path)
+        if url.path not in ACTIONS:
+            return self._json(404, {"error": "not found"})
+        if not self._token_ok(url):
+            return self._json(401, {"error": "토큰이 맞지 않는다"})
+        try:
+            out = ACTIONS[url.path]()
+            _cache.pop("check", None)  # 엔진 상태가 바뀌었으니 점검 캐시를 버린다
+            return self._json(200, out)
+        except Exception as exc:
+            journal.jot("incidents", {"kind": "engine_error", "path": url.path,
+                                      "trace": traceback.format_exc()[-800:]})
+            return self._json(500, {"error": f"{type(exc).__name__}: {exc}"})
 
     def do_GET(self):
         url = urlparse(self.path)

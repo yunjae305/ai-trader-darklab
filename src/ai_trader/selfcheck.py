@@ -356,6 +356,28 @@ def news_reports_dead_feeds_instead_of_going_quiet():
     assert N._clean(" <b>제목</b>\n 둘 ") == "제목 둘", N._clean(" <b>제목</b>\n 둘 ")
 
 
+def start_button_cannot_turn_on_live_trading():
+    """버튼은 루프를 띄울 뿐이다. 실계좌로 넘어가는 결정은 .env 에서 사람이 한다."""
+    from . import engine as E
+    args, mode = E._argv()
+    assert args[1:3] == ["-m", "ai_trader.loop"], args
+    if C.LIVE_TRADING and (C.have_broker_keys() or C.have_kiwoom_keys()):
+        assert "--live" in args, f"실주문 허용인데 모의로 뜬다: {args}"
+    else:
+        assert "--live" not in args, f"실주문 차단인데 --live 가 붙었다: {args}"
+        assert "--paper" in args, args
+    # 버튼 경로 어디에서도 AI_TRADER_LIVE 를 쓰지 않는다
+    src = (Path(E.__file__).read_text(encoding="utf-8"))
+    assert "AI_TRADER_LIVE" not in src.split('"""', 2)[2], "엔진이 실주문 스위치를 건드린다"
+    assert not E._alive(None) and not E._alive(0), "없는 pid 를 살아있다고 한다"
+    assert E.stop()["ok"] is False, "안 돌고 있는데 정지가 성공했다고 한다"
+
+    from . import dashboard as D
+    assert set(D.ACTIONS) == {"/api/engine/start", "/api/engine/stop", "/api/engine/once"}
+    for path in D.ACTIONS:  # 상태를 바꾸는 경로가 GET 으로 열리면 안 된다
+        assert path not in D.ROUTES, f"{path} 가 GET 으로도 열린다"
+
+
 def orders_route_by_market():
     """국내는 키움, 해외는 토스. 잘못 라우팅된 주문은 엉뚱한 계좌에서 체결된다."""
     assert C.market_of("005930") == "KR" and C.market_of("247540") == "KR"
@@ -433,6 +455,7 @@ CHECKS = [
     ("키움이 잘못된 주문을 먼저 막는다", kiwoom_rejects_bad_orders_before_sending),
     ("국내는 키움·해외는 토스로 갈린다", orders_route_by_market),
     ("죽은 뉴스 피드를 조용히 안 넘긴다", news_reports_dead_feeds_instead_of_going_quiet),
+    ("시작 버튼이 실주문을 못 켠다", start_button_cannot_turn_on_live_trading),
     (".env 키가 실제로 읽힌다", env_file_actually_reaches_config),
     ("LLM 키 없어도 규칙으로 매매한다", no_llm_key_still_trades_on_rules),
     ("장 마감 판정이 추측을 안 한다", market_gate_knows_when_it_is_guessing),

@@ -3,83 +3,140 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>AI 주식 자동매매 · 다크랩</title>
+<title>AI주식자동매매</title>
 <style>
 :root{
-  --bg:#EDE7DE; --card:#FBF9F5; --tile:#EFE9E0; --ink:#15130F; --dim:#8A8377;
-  --line:#DED6C9; --green:#0B9E77; --red:#E5484D; --amber:#E8892B; --nav:#221F1A;
+  --bg:#EDE7DE; --card:#FBF9F6; --tile:#EFE9E1; --ink:#14120F; --dim:#8D8579;
+  --line:#E2DBCE; --green:#0F9D76; --deep:#0B7D5E; --red:#E5484D; --blue:#2F6FED;
+  --amber:#E8892B; --nav:#221F1A;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{margin:0;background:var(--bg);color:var(--ink);
-  font:15px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard",system-ui,sans-serif;
-  padding:0 0 86px}
-.wrap{max-width:560px;margin:0 auto;padding:0 16px}
-h1{font-size:26px;margin:18px 0 2px;letter-spacing:-.5px}
-.sub{color:var(--dim);font-size:13px;margin:0 0 14px}
-.card{background:var(--card);border-radius:18px;padding:18px;margin:0 0 14px;
-  box-shadow:0 1px 2px rgba(0,0,0,.03)}
-.card h2{font-size:19px;margin:0 0 2px;letter-spacing:-.3px}
-.card .cap{color:var(--dim);font-size:13px;margin:0 0 14px}
-.eyebrow{font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:2px;color:var(--dim);margin-bottom:8px}
-.big{font-size:34px;font-weight:700;letter-spacing:-1px;margin:0}
-.tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
-.tile{background:var(--tile);border-radius:14px;padding:14px}
-.tile .k{font-size:12px;color:var(--dim);display:flex;align-items:center;gap:6px}
-.tile .v{font-size:20px;font-weight:700;margin:6px 0 2px;letter-spacing:-.6px;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tile .n{font-size:11px;color:var(--dim)}
-.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
-.up{color:var(--red)} .down{color:#2D6FE0} .flat{color:var(--dim)}
-.pos{color:var(--green)} .neg{color:var(--red)}
-.row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;
-  padding:13px 0;border-top:1px solid var(--line)}
-.row:first-of-type{border-top:0}
-.badge{font:700 11px/1 system-ui;padding:7px 10px;border-radius:8px;letter-spacing:.5px}
-.b-BUY{background:#DFF3EB;color:#08795C} .b-SELL{background:#FBE3E4;color:#C0353A}
-.b-HOLD{background:#FBE7D4;color:#C46A16}
-.st{font-size:11px;padding:3px 7px;border-radius:6px;background:var(--tile);color:var(--dim)}
-.st-FILLED{background:#DFF3EB;color:#08795C} .st-REJECTED{background:#FBE3E4;color:#C0353A}
-.st-ERROR{background:#FBE3E4;color:#C0353A}
-.nm{font-weight:700;font-size:16px} .cd{color:var(--dim);font-size:13px;font-family:ui-monospace,Menlo,monospace}
-.why{color:var(--dim);font-size:13px;margin-top:5px}
-.ring{width:44px;height:44px;flex:0 0 44px;border-radius:50%;display:grid;place-items:center;
-  font-weight:700;font-size:13px}
-.scroll{display:flex;gap:10px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
-.scroll::-webkit-scrollbar{display:none}
-.ix{background:var(--tile);border-radius:14px;padding:13px 16px;min-width:132px;flex:0 0 auto}
-.grid-ix{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:9px}
-.grid-ix .ix{min-width:0;padding:12px}
-.grid-ix .v{font-size:19px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.grid-ix .k{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ix .k{font-size:12px;color:var(--dim)} .ix .v{font:700 19px ui-monospace,Menlo,monospace;margin:5px 0 3px}
-.none{color:var(--dim);font-size:13px;background:var(--tile);border-radius:12px;padding:13px;margin-top:8px}
-nav{position:fixed;left:0;right:0;bottom:0;background:rgba(240,235,227,.96);
-  backdrop-filter:blur(12px);border-top:1px solid var(--line);padding:8px 10px calc(8px + env(safe-area-inset-bottom))}
-nav .in{max-width:560px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-nav button{border:0;background:transparent;color:var(--dim);font:600 12px system-ui;
-  padding:9px 4px;border-radius:13px;display:grid;gap:3px;justify-items:center;cursor:pointer}
-nav button.on{background:var(--nav);color:#F6F2EA}
-nav svg{width:19px;height:19px}
-.tab{display:none} .tab.on{display:block}
-.hd{display:flex;justify-content:space-between;align-items:center;margin:18px 0 12px}
-.rf{width:44px;height:44px;border-radius:50%;border:0;background:var(--card);font-size:19px;cursor:pointer}
-.pulse{width:14px;height:14px;border-radius:50%;box-shadow:0 0 0 6px rgba(229,72,77,.14)}
-.bar{height:7px;background:var(--tile);border-radius:99px;overflow:hidden;margin:9px 0 5px}
-.bar i{display:block;height:100%;background:var(--green)}
-.kv{display:flex;justify-content:space-between;padding:9px 0;border-top:1px solid var(--line);font-size:14px}
-.kv:first-child{border-top:0} .kv b{font-weight:700}
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",Pretendard,system-ui,sans-serif;
+  padding:0 0 96px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:560px;margin:0 auto;padding:0 18px}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.warn{background:#FBE7D4;color:#8A4A08;border-radius:12px;padding:12px;font-size:13px;margin-bottom:12px}
-.t{font-size:12px;color:var(--dim);font-family:ui-monospace,Menlo,monospace;flex:0 0 auto}
+
+/* 헤더 */
+.hd{display:flex;justify-content:space-between;align-items:flex-start;padding:26px 0 16px}
+h1{font-size:27px;font-weight:800;margin:0;letter-spacing:-1px}
+.tag{color:var(--dim);font-size:13px;margin:5px 0 0}
+.rf{width:52px;height:52px;border-radius:50%;border:0;background:var(--card);color:var(--blue);
+  font-size:23px;cursor:pointer;flex:0 0 auto;box-shadow:0 2px 6px rgba(0,0,0,.05)}
+
+/* 카드 */
+.card{background:var(--card);border-radius:22px;padding:22px 20px;margin:0 0 16px;
+  box-shadow:0 1px 3px rgba(0,0,0,.035)}
+.card h2{font-size:21px;font-weight:800;margin:0;letter-spacing:-.5px}
+.cap{color:var(--dim);font-size:13.5px;margin:5px 0 16px}
+.eyebrow{font:11px/1 ui-monospace,Menlo,monospace;letter-spacing:2.6px;color:var(--dim)}
+.big{font-size:39px;font-weight:800;letter-spacing:-1.6px;margin:9px 0 0}
+
+/* 맥박 */
+.pulse{position:relative;width:54px;height:54px;flex:0 0 auto}
+.pulse b{position:absolute;inset:0;border-radius:50%;opacity:.16}
+.pulse i{position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;
+  border-radius:50%}
+.pulse svg{position:absolute;left:50%;bottom:-9px;transform:translateX(-50%);width:34px;height:16px}
+
+/* 배너 */
+.banner{display:flex;align-items:flex-start;gap:9px;background:var(--tile);border-radius:14px;
+  padding:14px 15px;margin-top:18px}
+.banner .txt{flex:1;min-width:0}
+.banner .t1{font-weight:700;font-size:14.5px}
+.banner .t2{color:var(--dim);font-size:12.5px;margin-top:3px}
+
+/* 타일 */
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-top:16px}
+.tiles.c3{grid-template-columns:repeat(3,1fr)}
+.tile{background:var(--tile);border-radius:16px;padding:16px 15px}
+.tile .k{font-size:12.5px;color:var(--dim);display:flex;align-items:center;gap:7px;font-weight:600}
+.tile .v{font-size:22px;font-weight:800;margin:9px 0 4px;letter-spacing:-.8px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .n{font-size:11.5px;color:var(--dim)}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:0 0 auto}
+.ic{width:27px;height:27px;display:block;margin-bottom:9px}
+
+/* 행 */
+.row{display:flex;align-items:flex-start;gap:12px;padding:16px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0;padding-top:4px}
+.grow{flex:1;min-width:0}
+.nm{font-weight:800;font-size:17px;letter-spacing:-.4px}
+.line1{display:flex;align-items:baseline;gap:7px;min-width:0}
+.line1 .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.line1 .cd,.line1 .st{flex:0 0 auto}
+.cd{color:var(--dim);font-size:13.5px;font-family:ui-monospace,Menlo,monospace}
+.sub2{color:var(--green);font-size:13px;font-weight:700;margin-top:2px}
+.why{color:var(--dim);font-size:13.5px;margin-top:6px;line-height:1.55}
+.chev{color:#C8C0B2;font-size:19px;flex:0 0 auto;align-self:center}
+.t{font-size:12px;color:var(--dim);font-family:ui-monospace,Menlo,monospace;flex:0 0 auto;padding-top:2px}
+
+.badge{font:800 12px/1 system-ui;padding:9px 11px;border-radius:9px;letter-spacing:.4px;flex:0 0 auto}
+.b-BUY{background:#DCF2EA;color:#07694F} .b-SELL{background:#FBE0E1;color:#B92F34}
+.b-HOLD{background:#FBE6D2;color:#C4690F}
+.st{font-size:11px;padding:4px 8px;border-radius:7px;background:var(--tile);color:var(--dim);font-weight:600}
+.st-FILLED{background:#DCF2EA;color:#07694F} .st-REJECTED,.st-ERROR{background:#FBE0E1;color:#B92F34}
+.up{color:var(--red)} .down{color:var(--blue)} .flat{color:var(--dim)}
+.pos{color:var(--green)} .neg{color:var(--red)}
+
+/* 링 */
+.ring{width:50px;height:50px;flex:0 0 50px;border-radius:50%;display:grid;place-items:center}
+.ring span{background:var(--card);width:41px;height:41px;border-radius:50%;display:grid;
+  place-items:center;font-weight:800;font-size:15px}
+
+/* 지수 */
+.grid-ix{display:grid;grid-template-columns:repeat(auto-fit,minmax(142px,1fr));gap:10px}
+.grid-ix .ix{background:var(--tile);border-radius:16px;padding:15px}
+.ix .k{font-size:12.5px;color:var(--dim);font-weight:600}
+.ix .v{font:800 20px/1.2 ui-monospace,Menlo,monospace;margin:8px 0 5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ix .n{font-size:12.5px;font-weight:700}
+.note{display:flex;gap:10px;align-items:flex-start;margin-top:14px}
+.note .g{width:26px;height:26px;flex:0 0 auto}
+
+/* 엔진 */
+.sw{width:62px;height:34px;border-radius:99px;border:0;background:#D8D0C2;position:relative;
+  cursor:pointer;flex:0 0 auto;transition:background .18s}
+.sw.on{background:#33C463}
+.sw i{position:absolute;top:3px;left:3px;width:28px;height:28px;border-radius:50%;background:#fff;
+  transition:left .18s;box-shadow:0 1px 4px rgba(0,0,0,.25)}
+.sw.on i{left:31px}
+.run{border:0;background:var(--deep);color:#fff;font:800 17px system-ui;padding:14px 22px;
+  border-radius:14px;cursor:pointer;display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.run:disabled{background:#D8D0C2;color:#fff;cursor:not-allowed}
+.engrow{display:flex;align-items:center;gap:12px;padding:18px 0 0;margin-top:16px;
+  border-top:1px solid var(--line)}
+.bar{height:8px;background:var(--tile);border-radius:99px;overflow:hidden;margin:10px 0 7px}
+.bar i{display:block;height:100%;background:var(--green)}
+.scanrow{display:flex;justify-content:space-between;align-items:center;margin-top:16px;
+  font-size:15px;font-weight:600}
+.scanrow .l{display:flex;align-items:center;gap:8px;color:var(--dim)}
+
+.kv{display:flex;justify-content:space-between;padding:11px 0;border-top:1px solid var(--line);font-size:14.5px}
+.kv:first-child{border-top:0} .kv b{font-weight:800}
+.hint{display:inline-flex;align-items:center;gap:8px;background:var(--tile);border-radius:12px;
+  padding:11px 14px;font-size:13.5px;color:var(--dim);margin-bottom:6px}
+.none{color:var(--dim);font-size:13.5px;background:var(--tile);border-radius:14px;padding:15px;margin-top:8px}
+.warn{background:#FBE6D2;color:#8A4A08;border-radius:14px;padding:14px;font-size:13.5px;margin-top:14px}
+a.plain{color:inherit;text-decoration:none}
+
+/* 하단 탭 */
+nav{position:fixed;left:0;right:0;bottom:0;background:rgba(240,235,227,.97);
+  backdrop-filter:blur(14px);padding:9px 12px calc(9px + env(safe-area-inset-bottom))}
+nav .in{max-width:560px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+nav button{border:0;background:transparent;color:var(--dim);font:700 12.5px system-ui;
+  padding:11px 4px;border-radius:16px;display:grid;gap:5px;justify-items:center;cursor:pointer}
+nav button.on{background:var(--nav);color:#F6F2EA}
+nav svg{width:21px;height:21px}
+.tab{display:none} .tab.on{display:block}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="hd">
-    <div><h1>AI 주식 자동매매</h1><p class="sub" id="sub">다크랩 — 조회 전용</p></div>
-    <button class="rf" onclick="loadAll(true)">⟳</button>
+    <div><h1>AI주식자동매매</h1><p class="tag" id="sub">다크랩 · 기록을 읽고 엔진을 켠다</p></div>
+    <button class="rf" onclick="loadAll()">⟳</button>
   </div>
-
   <section id="tab-command" class="tab on"></section>
   <section id="tab-radar" class="tab"></section>
   <section id="tab-portfolio" class="tab"></section>
@@ -87,10 +144,10 @@ nav svg{width:19px;height:19px}
 </div>
 
 <nav><div class="in">
-  <button class="on" data-tab="command"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>Command</button>
-  <button data-tab="radar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg>Radar</button>
-  <button data-tab="portfolio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l6.4 4.2"/></svg>Portfolio</button>
-  <button data-tab="control"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h12M19 7h2M3 17h6M13 17h8"/><circle cx="17" cy="7" r="2"/><circle cx="11" cy="17" r="2"/></svg>Control</button>
+  <button class="on" data-tab="command"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="7.5" height="7.5" rx="2.2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2.2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2.2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2.2"/></svg>Command</button>
+  <button data-tab="radar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.2"/><path d="M12 1.5v3.4M12 19.1v3.4M1.5 12h3.4M19.1 12h3.4" stroke-linecap="round"/></svg>Radar</button>
+  <button data-tab="portfolio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="8.6"/><path d="M12 3.4v8.6l6.1 4" stroke-linecap="round"/></svg>Portfolio</button>
+  <button data-tab="control"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 7.5h11M19.5 7.5h1.5M3 16.5h5.5M14 16.5h7"/><circle cx="17" cy="7.5" r="2.3"/><circle cx="11" cy="16.5" r="2.3"/></svg>Control</button>
 </div></nav>
 
 <script>
@@ -102,138 +159,210 @@ const num = n => n == null ? '—' : Math.round(n).toLocaleString('ko-KR');
 const pct = n => n == null ? '—' : (n > 0 ? '+' : '') + Number(n).toFixed(2) + '%';
 const cls = n => n == null ? 'flat' : n > 0 ? 'up' : n < 0 ? 'down' : 'flat';
 const hhmm = ts => ts ? String(ts).slice(5, 16).replace('T', ' ') : '';
+const hm = ts => ts ? String(ts).slice(11, 16) : '';
 const clip = (s, n) => { s = String(s ?? ''); if (s.length <= n) return s;
-  const cut = s.slice(0, n); const sp = cut.lastIndexOf(' ');
-  return (sp > n * 0.6 ? cut.slice(0, sp) : cut).trimEnd() + '…'; };
+  const c = s.slice(0, n), sp = c.lastIndexOf(' ');
+  return (sp > n * 0.6 ? c.slice(0, sp) : c).trimEnd() + '…'; };
+const CHEV = '<span class="chev">›</span>';
 
-async function api(path) {
-  const r = await fetch(path + '?t=' + encodeURIComponent(T));
+async function api(p) {
+  const r = await fetch(p + '?t=' + encodeURIComponent(T));
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
   return r.json();
 }
-const none = (msg) => `<div class="none">${esc(msg)}</div>`;
+const none = m => `<div class="none">${esc(m)}</div>`;
+const card = (title, cap, body) =>
+  `<div class="card"><h2>${esc(title)}</h2><p class="cap">${esc(cap)}</p>${body}</div>`;
 
-function card(title, cap, body) {
-  return `<div class="card"><h2>${esc(title)}</h2><p class="cap">${esc(cap)}</p>${body}</div>`;
+/* ----------------------------------------------------------------- Engine */
+function engineBlock(e, g) {
+  if (!e) return '';
+  const on = e.running;
+  let bar = '', when = '—';
+  if (e.next_scan_at && e.last_cycle_at) {
+    const a = Date.parse(e.last_cycle_at), b = Date.parse(e.next_scan_at);
+    const p = Math.max(0, Math.min(100, (Date.now() - a) / (b - a) * 100));
+    bar = `<div class="bar"><i style="width:${p}%"></i></div>`;
+    when = String(e.next_scan_at).slice(5, 19).replace('T', ' ').replace('-', '/');
+  }
+  return `<div class="engrow">
+      <div class="grow">
+        <div style="font-weight:800;font-size:18px;letter-spacing:-.4px">자동매매</div>
+        <div class="cap" style="margin:4px 0 0">${on ? esc(e.mode) : '정지됨 · 켜면 ' + esc(e.would_start_as)}</div>
+      </div>
+      <button class="sw ${on ? 'on' : ''}" id="eng-sw" onclick="toggleEngine(${on})"><i></i></button>
+      <button class="run" id="eng-run" onclick="runOnce()"><svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor"><path d="M13 2L4.5 13.5H11l-1 8.5L19 10.5h-6.5z"/></svg>Run</button>
+    </div>
+    ${on ? `<div class="scanrow"><span class="l">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9">
+          <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.4 2" stroke-linecap="round"/></svg>
+        Next scan</span><b class="mono">${when}</b></div>
+      ${bar}
+      <div class="cap" style="margin:0">Cycle ${Math.round(g.cycle_seconds / 60)}분 · pid ${e.pid}</div>`
+      : `<div class="cap" style="margin:12px 0 0">실주문 ${g.live_trading
+          ? '<b class="neg">허용</b> (AI_TRADER_LIVE=1)' : '<b class="pos">차단</b>'}
+          — 이 버튼은 그 설정을 바꾸지 못한다</div>`}
+    <div id="eng-msg" class="why"></div>`;
+}
+async function post(p) {
+  return (await fetch(p + '?t=' + encodeURIComponent(T), {method: 'POST'})).json();
+}
+function busy(m) {
+  ['eng-sw', 'eng-run'].forEach(i => { const el = $(i); if (el) el.disabled = true; });
+  const el = $('eng-msg'); if (el) el.textContent = m;
+}
+async function toggleEngine(on) {
+  busy(on ? '정지하는 중…' : '시작하는 중…');
+  const out = await post(on ? '/api/engine/stop' : '/api/engine/start');
+  if (!out.ok && out.reason) { const m = $('eng-msg'); if (m) m.textContent = out.reason; }
+  setTimeout(loadAll, 700);
+}
+async function runOnce() {
+  busy('한 사이클 도는 중…');
+  const out = await post('/api/engine/once');
+  const m = $('eng-msg');
+  if (m) m.textContent = out.ok ? (out.output || '완료') : (out.reason || out.error || '실패');
+  setTimeout(loadAll, 700);
 }
 
 /* ---------------------------------------------------------------- Command */
 function renderCommand(d) {
-  const lab = d.lab, c = d.last_cycle, g = d.guardrails;
-  const open = lab.market_open && lab.source !== 'synthetic';
+  const lab = d.lab, g = d.guardrails, live = lab.market_open && lab.source !== 'synthetic';
+  const col = live ? 'var(--green)' : 'var(--red)';
+
   const desk = `<div class="card">
     <div style="display:flex;justify-content:space-between;align-items:flex-start">
       <div>
         <div class="eyebrow">LIVE MARKET DESK</div>
         <p class="big">${esc(lab.market_label)}</p>
-        <p class="sub mono" style="margin:4px 0 0">${esc(d.generated_at)}</p>
+        <p class="cap mono" style="margin:7px 0 0">${esc(d.generated_at).slice(5).replace('-', '/')}</p>
       </div>
-      <div class="pulse" style="background:${open ? 'var(--green)' : 'var(--red)'}"></div>
+      <div class="pulse"><b style="background:${col}"></b><i style="background:${col}"></i>
+        <svg viewBox="0 0 34 16" fill="none" stroke="${col}" stroke-width="1.8" stroke-linecap="round">
+          <path d="M1 8h6l3-6 4 12 3.5-8 3 4h12"/></svg></div>
     </div>
-    ${lab.source === 'synthetic'
-      ? `<div class="warn" style="margin-top:14px">합성 시장으로 돌고 있다 — 토스 키가 없다. 이 숫자는 실제 시세가 아니다.</div>` : ''}
-    ${!d.has_llm_key
-      ? `<div class="warn" style="margin-top:${lab.source === 'synthetic' ? '0' : '14px'}">ANTHROPIC_API_KEY 없음 — 퀀트 점수로 매매 중 (brain=quant-fallback)</div>` : ''}
+    ${lab.source === 'synthetic' ? banner('합성 시장으로 돌고 있다', '토스 키가 없다 — 이 숫자는 실제 시세가 아니다', d.generated_at) : ''}
+    ${!d.has_llm_key ? banner('퀀트 점수로 매매 중', `ANTHROPIC_API_KEY 없음 · brain=quant-fallback`, '') : ''}
     <div class="tiles">
-      <div class="tile"><div class="k"><i class="dot" style="background:var(--green)"></i>총 평가</div>
-        <div class="v">${won(lab.equity)}</div><div class="n">모드 ${esc(lab.mode)}</div></div>
-      <div class="tile"><div class="k"><i class="dot" style="background:var(--red)"></i>당일 손익</div>
-        <div class="v ${cls(lab.day_return_pct)}">${pct(lab.day_return_pct)}</div>
-        <div class="n">기준 ${won(lab.day_start_equity)}</div></div>
-      <div class="tile"><div class="k"><i class="dot" style="background:var(--green)"></i>예수금</div>
-        <div class="v">${won(Object.values(lab.sleeves).reduce((a, s) => a + s.cash, 0))}</div>
-        <div class="n">안정+공격 합산</div></div>
-      <div class="tile"><div class="k"><i class="dot" style="background:var(--amber)"></i>오픈 포지션</div>
-        <div class="v">${lab.positions.length}</div><div class="n">보유 종목</div></div>
+      ${tile('var(--green)', '총 평가', won(lab.equity), '자체 장부 · ' + esc(lab.mode))}
+      ${tile('var(--red)', '손익', pct(lab.day_return_pct), '기준 ' + won(lab.day_start_equity), cls(lab.day_return_pct))}
+      ${tile('var(--green)', '예수금', won(Object.values(lab.sleeves).reduce((a, s) => a + s.cash, 0)), '안정+공격 합산')}
+      ${tile('var(--amber)', '오픈 포지션', String(lab.positions.length), '보유 종목')}
     </div></div>`;
 
-  const ctrl = card('AI Trading 컨트롤', '가드레일과 주기', `
-    <div class="tiles" style="grid-template-columns:repeat(3,1fr);margin-top:0">
-      <div class="tile"><div class="n">Mode</div><div class="v" style="font-size:16px">${lab.halted ? 'HALTED' : 'AUTO'}</div></div>
-      <div class="tile"><div class="n">Risk</div><div class="v" style="font-size:16px">${g.live_trading ? 'LIVE' : 'ARMED'}</div></div>
-      <div class="tile"><div class="n">Universe</div><div class="v" style="font-size:16px">${g.universe}</div></div>
+  const ctrl = card('AI Trading 컨트롤', '스캐너, 리스크 게이트, 주문 엔진', `
+    <div class="tiles c3" style="margin-top:0">
+      <div class="tile">${ICON.chip}<div class="n">Mode</div>
+        <div class="v" style="font-size:17px;margin:5px 0 0">${lab.halted ? 'HALTED' : 'AUTO'}</div></div>
+      <div class="tile">${ICON.shield}<div class="n">Risk</div>
+        <div class="v" style="font-size:17px;margin:5px 0 0">${g.live_trading ? 'LIVE' : 'ARMED'}</div></div>
+      <div class="tile">${ICON.target}<div class="n">Radar</div>
+        <div class="v" style="font-size:17px;margin:5px 0 0">${g.universe}</div></div>
     </div>
-    <div class="kv" style="margin-top:12px"><span>사이클 주기</span><b>${Math.round(g.cycle_seconds / 60)}분</b></div>
-    <div class="kv"><span>손절</span><b class="neg">${g.stop_loss_pct}%</b></div>
-    <div class="kv"><span>당일 정지선</span><b class="neg">${g.daily_loss_kill_pct}%</b></div>
-    <div class="kv"><span>종목당 상한</span><b>${g.max_position_pct}%</b></div>
-    ${c ? `<div class="kv"><span>마지막 사이클</span><b class="mono">${hhmm(c.ts)}</b></div>` : ''}`);
+    <div style="margin-top:16px">
+      <div class="kv"><span>손절</span><b class="neg">${g.stop_loss_pct}%</b></div>
+      <div class="kv"><span>당일 정지선</span><b class="neg">${g.daily_loss_kill_pct}%</b></div>
+      <div class="kv"><span>종목당 상한</span><b>${g.max_position_pct}%</b></div>
+    </div>
+    ${engineBlock(d.engine, g)}`);
 
-  const stats = card('Strategy Stats', '판단 주체별 누적 성과',
-    d.strategy_stats.length ? `<div class="scroll">${d.strategy_stats.map(s => `
-      <div class="ix" style="min-width:190px">
-        <div class="k">${esc(s.name)}${s.is_ai ? '' : ' · 대역'}</div>
-        <div class="v ${cls(s.last_return_pct)}">${pct(s.last_return_pct)}</div>
-        <div class="n">${s.days}일 · ${esc(s.source || '')} · 주문 ${s.trades ?? 0}건</div>
-        <div class="n" style="margin-top:6px">MDD ${s.last_mdd_pct ?? '—'}% · 손절 ${s.stop_loss_exits ?? 0}건</div>
-        <div class="n">vs ${esc(d.guardrails.benchmark)} ${s.alpha_pct == null ? '—'
+  const stats = card('Strategy Stats', '판단 주체별 누적 성과 비교',
+    d.strategy_stats.length ? `<div class="tiles" style="margin-top:0">${d.strategy_stats.slice(0, 4).map(s => `
+      <div class="tile">
+        <div style="font-weight:800;font-size:15px">${esc(s.name)}</div>
+        <div class="v ${cls(s.last_return_pct)}" style="font-size:26px;margin:10px 0 6px">${pct(s.last_return_pct)}</div>
+        <div class="n">${s.days}일 · ${esc(s.source || '')}</div>
+        <div class="n" style="margin-top:9px;padding-top:9px;border-top:1px solid var(--line)">
+          MDD ${s.last_mdd_pct ?? '—'}% · 주문 ${s.trades ?? 0}</div>
+        <div class="n">vs ${esc(g.benchmark)} ${s.alpha_pct == null ? '—'
           : `<b class="${s.beat_benchmark ? 'pos' : 'neg'}">${pct(s.alpha_pct)}</b>`}</div>
       </div>`).join('')}</div>`
       : none('백테스트 기록이 없다 — python3 -m ai_trader.backtest'));
 
-  const idx = card('Market Index', '지수와 환율', `<div class="grid-ix">${d.indices.map(i => `
-    <div class="ix"><div class="k">${esc(i.name)}</div>
-      ${i.unavailable ? `<div class="v" style="font-size:14px;color:var(--dim)">—</div><div class="n">${esc(i.unavailable)}</div>`
-        : `<div class="v">${Number(i.last).toLocaleString('ko-KR', {maximumFractionDigits: 2})}</div>
-           <div class="n ${cls(i.change_pct)}">${i.change_pct > 0 ? '▲' : i.change_pct < 0 ? '▼' : '·'} ${pct(i.change_pct)}</div>
-           ${i.unit ? `<div class="n" style="font-size:10px">${esc(i.unit)}</div>` : ''}`}
-    </div>`).join('')}</div>`);
+  const idx = card('Market Index', '지수와 환율 압력',
+    `<div class="grid-ix">${d.indices.map(i => `
+      <div class="ix"><div class="k">${esc(i.name)}</div>
+        ${i.unavailable
+          ? `<div class="v" style="color:var(--dim)">—</div><div class="n" style="color:var(--dim)">${esc(i.unavailable)}</div>`
+          : `<div class="v">${Number(i.last).toLocaleString('ko-KR', {maximumFractionDigits: 2})}</div>
+             <div class="n ${cls(i.change_pct)}">${i.change_pct > 0 ? '▲' : i.change_pct < 0 ? '▼' : '·'} ${pct(i.change_pct)}</div>
+             ${i.unit ? `<div class="n" style="color:var(--dim);font-weight:500">${esc(i.unit)}</div>` : ''}`}
+      </div>`).join('')}</div>`);
 
   const ai = card('AI Analysis', '최근 분석과 주문 판단',
     d.ai_analysis.length ? d.ai_analysis.map(a => `
       <div class="row">
         <span class="badge b-${esc(a.action || 'HOLD')}">${esc(a.action || 'HOLD')}</span>
-        <div style="flex:1;min-width:0">
-          <div><span class="nm">${esc(a.name)}</span> <span class="cd">${esc(a.symbol)}</span></div>
-          <div class="why">${esc(clip(a.reason, 180))}</div>
-          <div class="why mono" style="font-size:11px">${hhmm(a.ts)} · ${esc(a.brain || '')}</div>
+        <div class="grow">
+          <div class="line1"><span class="nm">${esc(a.name)}</span><span class="cd">${esc(a.symbol)}</span></div>
+          <div class="why">${esc(clip(a.reason, 150))}</div>
+          <div class="why mono" style="font-size:11.5px;margin-top:4px">${hhmm(a.ts)} · ${esc(a.brain || '')}</div>
         </div>
-        <b class="${a.status === 'FILLED' ? 'pos' : 'flat'}">${a.confidence == null ? '' : Math.round(a.confidence * 100) + '%'}</b>
+        <b class="${a.status === 'FILLED' ? 'pos' : 'flat'}" style="font-size:15px;padding-top:2px">${
+          a.confidence == null ? '' : Math.round(a.confidence * 100) + '%'}</b>${CHEV}
       </div>`).join('')
-      : none('판단 기록이 없다 — python3 -m ai_trader.loop --paper --once'));
+      : none('판단 기록이 없다 — 자동매매를 켜거나 Run 을 눌러라'));
 
   const feeds = [...new Set(d.news.filter(n => n.source).map(n => n.source))];
-  const insight = card('Market Insight', `증권·경제 매체 ${feeds.length}곳 실시간 헤드라인 · ${feeds.join(' · ')}`,
+  const insight = card('Market Insight', `증권·경제 매체 ${feeds.length}곳 · ${feeds.join(' · ')}`,
     d.news.length ? d.news.map(n => n.unavailable
-      ? `<div class="none">못 받은 피드 — ${esc(n.unavailable)}</div>`
+      ? none('못 받은 피드 — ' + n.unavailable)
       : `<div class="row">
-        <span class="t">${hhmm(n.published).slice(6)}</span>
-        <div style="flex:1;min-width:0">
-          <div><span class="st">${esc(n.source)}</span> <span class="cd">${esc(n.category)}</span></div>
-          <div style="font-weight:600;margin-top:4px">${n.link
-            ? `<a href="${esc(n.link)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(n.title)}</a>`
-            : esc(n.title)}</div>
-        </div></div>`).join('')
+          <span class="t">${hm(n.published) || '—'}</span>
+          <i class="dot" style="background:var(--green);margin-top:7px"></i>
+          <div class="grow">
+            <div style="font-weight:700;font-size:13px;color:var(--green)">${esc(n.category)}
+              <span style="color:var(--dim);font-weight:600">${esc(n.source)}</span></div>
+            <div style="font-weight:700;margin-top:5px;font-size:16px;line-height:1.45">
+              ${n.link ? `<a class="plain" href="${esc(n.link)}" target="_blank" rel="noopener">${esc(n.title)}</a>` : esc(n.title)}</div>
+          </div>${CHEV}
+        </div>`).join('')
       : none('뉴스를 못 받았다 — 네트워크를 확인하라'));
 
-  const inc = d.incidents.length ? card('Incidents', '킬스위치·손절·오류',
+  const inc = d.incidents.length ? card('Incidents', '킬스위치 · 손절 · 오류',
     d.incidents.map(i => `<div class="row"><span class="t">${hhmm(i.ts)}</span>
-      <div style="flex:1"><b>${esc(i.kind)}</b>
+      <div class="grow"><b>${esc(i.kind)}</b>
       <div class="why">${esc(i.detail || i.symbol || i.status || '')}</div></div></div>`).join('')) : '';
 
   $('tab-command').innerHTML = desk + ctrl + stats + idx + ai + insight + inc;
 }
+function tile(color, k, v, n, vcls) {
+  return `<div class="tile"><div class="k"><i class="dot" style="background:${color}"></i>${esc(k)}</div>
+    <div class="v ${vcls || ''}">${v}</div><div class="n">${esc(n)}</div></div>`;
+}
+function banner(t1, t2, ts) {
+  return `<div class="banner"><i class="dot" style="background:var(--amber);margin-top:6px"></i>
+    <div class="txt"><div class="t1">${esc(t1)}</div><div class="t2">${esc(t2)}</div></div>
+    ${ts ? `<span class="t">${esc(ts).slice(5, 16).replace('-', '/')}</span>` : ''}</div>`;
+}
+const ICON = {
+  chip: `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="#33C463" stroke-width="1.8"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M9.5 3v3.5M14.5 3v3.5M9.5 17.5V21M14.5 17.5V21M3 9.5h3.5M3 14.5h3.5M17.5 9.5H21M17.5 14.5H21" stroke-linecap="round"/></svg>`,
+  shield: `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="#0F9D76" stroke-width="1.8"><path d="M12 2.8l7.2 3v6c0 4.5-3 8-7.2 9.4-4.2-1.4-7.2-4.9-7.2-9.4v-6z" stroke-linejoin="round"/></svg>`,
+  target: `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="#E8892B" stroke-width="1.8"><circle cx="12" cy="12" r="7.4"/><circle cx="12" cy="12" r="2.2"/><path d="M12 1.6v3.5M12 18.9v3.5M1.6 12h3.5M18.9 12h3.5" stroke-linecap="round"/></svg>`,
+  globe: `<svg class="g" viewBox="0 0 24 24" fill="none" stroke="#0F9D76" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.8 2.6 15.2 0 18M12 3c-2.6 2.8-2.6 15.2 0 18"/></svg>`,
+};
 
 /* ------------------------------------------------------------------ Radar */
 function renderRadar(d) {
   const ring = s => {
-    if (s == null) return `<div class="ring" style="background:var(--tile);color:var(--dim)">—</div>`;
-    const col = s >= d.buy_above ? 'var(--green)' : s < d.sell_below ? 'var(--red)' : 'var(--amber)';
-    return `<div class="ring" style="background:conic-gradient(${col} ${s * 3.6}deg,var(--tile) 0);color:var(--ink)">
-      <span style="background:var(--card);width:34px;height:34px;border-radius:50%;display:grid;place-items:center">${Math.round(s)}</span></div>`;
+    if (s == null) return `<div class="ring" style="background:var(--tile)"><span style="color:var(--dim)">—</span></div>`;
+    const c = s >= d.buy_above ? '#33C463' : s < d.sell_below ? 'var(--red)' : 'var(--amber)';
+    return `<div class="ring" style="background:conic-gradient(${c} ${s * 3.6}deg,var(--tile) 0)">
+      <span>${Math.round(s)}</span></div>`;
   };
-  $('tab-radar').innerHTML = card('Live Radar', `퀀트 점수 순위 · 매수선 ${d.buy_above} / 매도선 ${d.sell_below} · ${d.source}`,
+  $('tab-radar').innerHTML = card('Live Radar', '자동 선정 후보 상위권',
+    `<div class="hint"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5M12 8h.01" stroke-linecap="round"/></svg>점수는 퀀트 5요소 합산 · 매수선 ${d.buy_above} / 매도선 ${d.sell_below} · ${d.source}</div>` +
     d.rows.map(r => `<div class="row">${ring(r.score)}
-      <div style="flex:1;min-width:0">
-        <div><span class="nm">${esc(r.name)}</span> <span class="cd">${esc(r.symbol)}</span>
-          <span class="st">${esc(r.market)}</span></div>
+      <div class="grow">
+        <div class="line1"><span class="nm">${esc(r.name)}</span><span class="cd">${esc(r.symbol)}</span></div>
+        <div class="sub2">${esc(r.market)}${r.alignment ? ' · ' + esc(r.alignment) : ''}</div>
         <div class="why">${r.unavailable ? esc(r.unavailable)
-          : `${esc(r.alignment || '')} · RSI ${r.rsi == null ? '—' : Math.round(r.rsi)} ${esc(r.rsi_zone || '')} · ADX ${esc(r.adx || '—')} · 매물대 ${esc(r.room || '—')}`}</div>
-        <div class="why" style="font-size:11px">${esc(clip((r.reasons || []).join(' · '), 150))}</div>
+          : `RSI ${r.rsi == null ? '—' : Math.round(r.rsi)} ${esc(r.rsi_zone || '')} · ADX ${esc(r.adx || '—')} · 매물대 ${esc(r.room || '—')}`}</div>
+        <div class="why" style="font-size:11.5px">${esc(clip((r.reasons || []).join(' · '), 130))}</div>
       </div>
       <div style="text-align:right;flex:0 0 auto">
-        <div class="mono" style="font-weight:700">${num(r.last)}</div>
-        <div class="${cls(r.chg_1d_pct)}" style="font-size:13px">${pct(r.chg_1d_pct)}</div>
+        <div class="mono" style="font-weight:800;font-size:16px">${num(r.last)}원</div>
+        <div class="${cls(r.chg_1d_pct)}" style="font-size:14px;font-weight:700">${pct(r.chg_1d_pct)}</div>
       </div></div>`).join(''));
 }
 
@@ -241,18 +370,19 @@ function renderRadar(d) {
 function renderPortfolio(p, t) {
   const s = p.snapshot, dv = p.diversification;
   const sleeves = Object.entries(s.sleeves).map(([k, v]) => `
-    <div class="tile"><div class="k">${k} · 목표 ${Math.round(v.target_weight * 100)}%</div>
+    <div class="tile"><div class="k" style="white-space:nowrap">${k} · 목표 ${Math.round(v.target_weight * 100)}%</div>
       <div class="v">${won(v.equity)}</div>
-      <div class="n">현금 ${won(v.cash)} · 실현 <b class="${v.realized_pnl >= 0 ? 'pos' : 'neg'}">${won(v.realized_pnl)}</b></div></div>`).join('');
+      <div class="n">현금 ${won(v.cash)}</div>
+      <div class="n">실현 <b class="${v.realized_pnl >= 0 ? 'pos' : 'neg'}">${won(v.realized_pnl)}</b></div></div>`).join('');
 
   const pos = s.positions.length ? s.positions.map(x => `
-    <div class="row"><div style="flex:1">
-      <div><span class="nm">${esc(x.name || x.symbol)}</span> <span class="cd">${esc(x.symbol)}</span> <span class="st">${esc(x.sleeve)}</span></div>
+    <div class="row"><div class="grow">
+      <div class="line1"><span class="nm">${esc(x.name || x.symbol)}</span><span class="cd">${esc(x.symbol)}</span><span class="st">${esc(x.sleeve)}</span></div>
       <div class="why mono">${x.qty}주 · 평단 ${num(x.avg_price)} → ${num(x.last_price)}</div>
     </div><div style="text-align:right">
-      <div class="mono" style="font-weight:700">${won(x.value)}</div>
-      <div class="${x.unrealized_pct >= 0 ? 'pos' : 'neg'}">${pct(x.unrealized_pct)}</div>
-    </div></div>`).join('') : none('보유 종목이 없다');
+      <div class="mono" style="font-weight:800;font-size:16px">${won(x.value)}</div>
+      <div class="${x.unrealized_pct >= 0 ? 'pos' : 'neg'}" style="font-weight:700">${pct(x.unrealized_pct)}</div>
+    </div>${CHEV}</div>`).join('') : none('보유 종목이 없다');
 
   const divBody = dv.unavailable ? none(dv.unavailable) : dv.note ? none(dv.note) : `
     <div class="kv"><span>실질 분산 (덩어리/종목)</span><b>${dv.effective_groups}/${dv.symbols}</b></div>
@@ -262,30 +392,31 @@ function renderPortfolio(p, t) {
   const log = t.rows.length ? t.rows.map(r => `
     <div class="row"><span class="t">${hhmm(r.ts)}</span>
       <span class="badge b-${esc(r.action)}">${esc(r.action)}</span>
-      <div style="flex:1;min-width:0">
-        <div><span class="nm" style="font-size:15px">${esc(r.name)}</span>
+      <div class="grow">
+        <div><span class="nm" style="font-size:16px">${esc(r.name)}</span>
           <span class="st st-${esc(r.status)}">${esc(r.status)}</span>
-          ${r.forced ? '<span class="st" style="background:#FBE3E4;color:#C0353A">손절</span>' : ''}</div>
-        <div class="why mono">${r.quantity}주 @ ${num(r.price)}
-          ${r.realized_pnl != null ? ` · 실현 <b class="${r.realized_pnl >= 0 ? 'pos' : 'neg'}">${won(r.realized_pnl)}</b>` : ''}</div>
-        <div class="why">${esc(clip(r.rejected || r.reason || '', 140))}</div>
-      </div></div>`).join('') : none('거래 기록이 없다 — 루프를 한 번 돌려라');
+          ${r.forced ? '<span class="st st-REJECTED">손절</span>' : ''}</div>
+        <div class="why mono">${r.quantity}주 @ ${num(r.price)}${
+          r.realized_pnl != null ? ` · 실현 <b class="${r.realized_pnl >= 0 ? 'pos' : 'neg'}">${won(r.realized_pnl)}</b>` : ''}</div>
+        <div class="why">${esc(clip(r.rejected || r.reason || '', 120))}</div>
+      </div></div>`).join('') : none('거래 기록이 없다 — 자동매매를 켜거나 Run 을 눌러라');
 
   $('tab-portfolio').innerHTML =
     card('Portfolio', `총 ${won(s.equity)} · 당일 ${pct(s.day_return_pct)}`,
       `<div class="tiles" style="margin-top:0">${sleeves}</div>`) +
     card('보유 종목', `${s.positions.length}종목`, pos) +
     card('분산', '같이 움직이는가', divBody) +
-    card('실시간 거래 기록', `최근 ${t.rows.length}건 · 체결·거부·손절 전부`, log);
+    card('실시간 거래 기록', `최근 ${t.rows.length}건 · 체결 · 거부 · 손절`, log);
 }
 
 /* ---------------------------------------------------------------- Control */
 function renderControl(d) {
-  const mark = m => m === '✓' ? 'pos' : m === '✗' ? 'neg' : 'flat';
+  const mk = m => m === '✓' ? 'pos' : m === '✗' ? 'neg' : 'flat';
   $('tab-control').innerHTML =
     card('연결 점검', '조회만 한다 — 주문은 내지 않는다',
-      d.checks.map(c => `<div class="row"><b class="${mark(c.mark)}" style="font-size:17px">${c.mark}</b>
-        <div style="flex:1"><b>${esc(c.label)}</b><div class="why">${esc(c.detail)}</div></div></div>`).join('')) +
+      d.checks.map(c => `<div class="row"><b class="${mk(c.mark)}" style="font-size:19px">${c.mark}</b>
+        <div class="grow"><b style="font-size:16px">${esc(c.label)}</b>
+        <div class="why">${esc(c.detail)}</div></div></div>`).join('')) +
     card('사람이 정한 경계', 'AI 가 바꿀 수 없는 값', `
       <div class="kv"><span>슬리브</span><b>안정 ${d.guardrails.sleeves.STABLE * 100}% : 공격 ${d.guardrails.sleeves.AGGRESSIVE * 100}%</b></div>
       <div class="kv"><span>종목당 상한</span><b>${d.guardrails.max_position_pct}%</b></div>
@@ -293,34 +424,30 @@ function renderControl(d) {
       <div class="kv"><span>당일 정지</span><b class="neg">${d.guardrails.daily_loss_kill_pct}%</b></div>
       <div class="kv"><span>사이클당 최대 주문</span><b>${d.guardrails.max_orders_per_cycle}건</b></div>
       <div class="kv"><span>벤치마크</span><b>${esc(d.guardrails.benchmark)}</b></div>
-      <div class="kv"><span>실주문</span><b class="${d.guardrails.live_trading ? 'neg' : 'pos'}">${d.guardrails.live_trading ? '허용 (AI_TRADER_LIVE=1)' : '차단'}</b></div>
+      <div class="kv"><span>실주문</span><b class="${d.guardrails.live_trading ? 'neg' : 'pos'}">${
+        d.guardrails.live_trading ? '허용 (AI_TRADER_LIVE=1)' : '차단'}</b></div>
       <div class="kv"><span>.env</span><b>${d.env_loaded ? '로드됨' : '없음'}</b></div>`) +
     card('유니버스', `${d.universe.length}종목 · 관찰 대상`,
       d.universe.map(u => `<div class="kv"><span><b>${esc(u.name)}</b> <span class="cd">${esc(u.symbol)}</span></span>
         <span class="st">${esc(u.market)}</span></div>`).join('')) +
     card('없는 화면', '데이터원이 없어 만들지 않은 것', none(
-      'DART 재무제표(상세실적) — 전자공시 API 연동이 이 레포에 없다. 숫자를 지어내지 않기 위해 화면을 만들지 않았다. ' +
-      '섹터 분류도 같은 이유로 없다.'));
+      'DART 재무제표(상세실적) — 전자공시 API 연동이 이 레포에 없다. 숫자를 지어내지 않기 위해 ' +
+      '화면을 만들지 않았다. 섹터 분류도 같은 이유로 없다 (시장 KR/US 만 표시한다).'));
 }
 
 /* ------------------------------------------------------------------- boot */
-async function loadAll(force) {
-  const set = (id, html) => $(id).innerHTML = html;
-  try {
-    renderCommand(await api('/api/command'));
-  } catch (e) { set('tab-command', none('불러오기 실패: ' + e.message)); }
-  try {
-    renderRadar(await api('/api/radar'));
-  } catch (e) { set('tab-radar', none('불러오기 실패: ' + e.message)); }
-  try {
-    renderPortfolio(await api('/api/portfolio'), await api('/api/trades'));
-  } catch (e) { set('tab-portfolio', none('불러오기 실패: ' + e.message)); }
-  try {
-    renderControl(await api('/api/control'));
-  } catch (e) { set('tab-control', none('불러오기 실패: ' + e.message)); }
-  $('sub').textContent = '다크랩 — 조회 전용 · ' + new Date().toLocaleTimeString('ko-KR');
+async function loadAll() {
+  const set = (id, h) => $(id).innerHTML = h;
+  try { renderCommand(await api('/api/command')); }
+  catch (e) { set('tab-command', none('불러오기 실패: ' + e.message)); }
+  try { renderRadar(await api('/api/radar')); }
+  catch (e) { set('tab-radar', none('불러오기 실패: ' + e.message)); }
+  try { renderPortfolio(await api('/api/portfolio'), await api('/api/trades')); }
+  catch (e) { set('tab-portfolio', none('불러오기 실패: ' + e.message)); }
+  try { renderControl(await api('/api/control')); }
+  catch (e) { set('tab-control', none('불러오기 실패: ' + e.message)); }
+  $('sub').textContent = '다크랩 · ' + new Date().toLocaleTimeString('ko-KR');
 }
-
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.id === 'tab-' + b.dataset.tab));

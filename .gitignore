@@ -22,3 +22,7 @@ research/*.md
 
 # playwright 스크린샷
 .playwright-mcp/
+
+# 엔진 프로세스 상태·로그
+lab/engine.json
+lab/engine.log
