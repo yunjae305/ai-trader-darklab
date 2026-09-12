@@ -19,3 +19,6 @@ lab/policy_history/
 research/*.jsonl
 research/*.md
 !research/toss_openapi_reference.md
+
+# playwright 스크린샷
+.playwright-mcp/

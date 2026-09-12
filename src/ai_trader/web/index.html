@@ -25,7 +25,8 @@ h1{font-size:26px;margin:18px 0 2px;letter-spacing:-.5px}
 .tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
 .tile{background:var(--tile);border-radius:14px;padding:14px}
 .tile .k{font-size:12px;color:var(--dim);display:flex;align-items:center;gap:6px}
-.tile .v{font-size:21px;font-weight:700;margin:6px 0 2px;letter-spacing:-.5px;word-break:break-all}
+.tile .v{font-size:20px;font-weight:700;margin:6px 0 2px;letter-spacing:-.6px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tile .n{font-size:11px;color:var(--dim)}
 .dot{width:7px;height:7px;border-radius:50%;display:inline-block}
 .up{color:var(--red)} .down{color:#2D6FE0} .flat{color:var(--dim)}
@@ -92,10 +93,14 @@ nav svg{width:19px;height:19px}
 const T = new URLSearchParams(location.search).get('t') || '';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
-const won = n => n == null ? '—' : Number(n).toLocaleString('ko-KR') + '원';
+const won = n => n == null ? '—' : Math.round(n).toLocaleString('ko-KR') + '원';
+const num = n => n == null ? '—' : Math.round(n).toLocaleString('ko-KR');
 const pct = n => n == null ? '—' : (n > 0 ? '+' : '') + Number(n).toFixed(2) + '%';
 const cls = n => n == null ? 'flat' : n > 0 ? 'up' : n < 0 ? 'down' : 'flat';
 const hhmm = ts => ts ? String(ts).slice(5, 16).replace('T', ' ') : '';
+const clip = (s, n) => { s = String(s ?? ''); if (s.length <= n) return s;
+  const cut = s.slice(0, n); const sp = cut.lastIndexOf(' ');
+  return (sp > n * 0.6 ? cut.slice(0, sp) : cut).trimEnd() + '…'; };
 
 async function api(path) {
   const r = await fetch(path + '?t=' + encodeURIComponent(T));
@@ -111,12 +116,12 @@ function card(title, cap, body) {
 /* ---------------------------------------------------------------- Command */
 function renderCommand(d) {
   const lab = d.lab, c = d.last_cycle, g = d.guardrails;
-  const open = lab.market_open;
+  const open = lab.market_open && lab.source !== 'synthetic';
   const desk = `<div class="card">
     <div style="display:flex;justify-content:space-between;align-items:flex-start">
       <div>
         <div class="eyebrow">LIVE MARKET DESK</div>
-        <p class="big">${open ? '장 운영중' : '장 마감'}</p>
+        <p class="big">${esc(lab.market_label)}</p>
         <p class="sub mono" style="margin:4px 0 0">${esc(d.generated_at)}</p>
       </div>
       <div class="pulse" style="background:${open ? 'var(--green)' : 'var(--red)'}"></div>
@@ -165,7 +170,7 @@ function renderCommand(d) {
   const idx = card('Market Index', '지수와 환율', `<div class="scroll">${d.indices.map(i => `
     <div class="ix"><div class="k">${esc(i.name)}</div>
       ${i.unavailable ? `<div class="v" style="font-size:14px;color:var(--dim)">—</div><div class="n">${esc(i.unavailable)}</div>`
-        : `<div class="v">${Number(i.last).toLocaleString('ko-KR')}</div>
+        : `<div class="v">${Number(i.last).toLocaleString('ko-KR', {maximumFractionDigits: 2})}</div>
            <div class="n ${cls(i.change_pct)}">${i.change_pct > 0 ? '▲' : '▼'} ${pct(i.change_pct)}</div>`}
     </div>`).join('')}</div>`);
 
@@ -175,7 +180,7 @@ function renderCommand(d) {
         <span class="badge b-${esc(a.action || 'HOLD')}">${esc(a.action || 'HOLD')}</span>
         <div style="flex:1;min-width:0">
           <div><span class="nm">${esc(a.name)}</span> <span class="cd">${esc(a.symbol)}</span></div>
-          <div class="why">${esc(a.reason).slice(0, 180)}</div>
+          <div class="why">${esc(clip(a.reason, 180))}</div>
           <div class="why mono" style="font-size:11px">${hhmm(a.ts)} · ${esc(a.brain || '')}</div>
         </div>
         <b class="${a.status === 'FILLED' ? 'pos' : 'flat'}">${a.confidence == null ? '' : Math.round(a.confidence * 100) + '%'}</b>
@@ -214,10 +219,10 @@ function renderRadar(d) {
           <span class="st">${esc(r.market)}</span></div>
         <div class="why">${r.unavailable ? esc(r.unavailable)
           : `${esc(r.alignment || '')} · RSI ${r.rsi == null ? '—' : Math.round(r.rsi)} ${esc(r.rsi_zone || '')} · ADX ${esc(r.adx || '—')} · 매물대 ${esc(r.room || '—')}`}</div>
-        <div class="why" style="font-size:11px">${esc((r.reasons || []).join(' · ')).slice(0, 150)}</div>
+        <div class="why" style="font-size:11px">${esc(clip((r.reasons || []).join(' · '), 150))}</div>
       </div>
       <div style="text-align:right;flex:0 0 auto">
-        <div class="mono" style="font-weight:700">${r.last == null ? '—' : Number(r.last).toLocaleString('ko-KR')}</div>
+        <div class="mono" style="font-weight:700">${num(r.last)}</div>
         <div class="${cls(r.chg_1d_pct)}" style="font-size:13px">${pct(r.chg_1d_pct)}</div>
       </div></div>`).join(''));
 }
@@ -232,8 +237,8 @@ function renderPortfolio(p, t) {
 
   const pos = s.positions.length ? s.positions.map(x => `
     <div class="row"><div style="flex:1">
-      <div><span class="nm">${esc(x.symbol)}</span> <span class="st">${esc(x.sleeve)}</span></div>
-      <div class="why mono">${x.qty}주 · 평단 ${Number(x.avg_price).toLocaleString('ko-KR')} → ${Number(x.last_price).toLocaleString('ko-KR')}</div>
+      <div><span class="nm">${esc(x.name || x.symbol)}</span> <span class="cd">${esc(x.symbol)}</span> <span class="st">${esc(x.sleeve)}</span></div>
+      <div class="why mono">${x.qty}주 · 평단 ${num(x.avg_price)} → ${num(x.last_price)}</div>
     </div><div style="text-align:right">
       <div class="mono" style="font-weight:700">${won(x.value)}</div>
       <div class="${x.unrealized_pct >= 0 ? 'pos' : 'neg'}">${pct(x.unrealized_pct)}</div>
@@ -251,9 +256,9 @@ function renderPortfolio(p, t) {
         <div><span class="nm" style="font-size:15px">${esc(r.name)}</span>
           <span class="st st-${esc(r.status)}">${esc(r.status)}</span>
           ${r.forced ? '<span class="st" style="background:#FBE3E4;color:#C0353A">손절</span>' : ''}</div>
-        <div class="why mono">${r.quantity}주 @ ${Number(r.price || 0).toLocaleString('ko-KR')}
+        <div class="why mono">${r.quantity}주 @ ${num(r.price)}
           ${r.realized_pnl != null ? ` · 실현 <b class="${r.realized_pnl >= 0 ? 'pos' : 'neg'}">${won(r.realized_pnl)}</b>` : ''}</div>
-        <div class="why">${esc(r.rejected || r.reason || '').slice(0, 140)}</div>
+        <div class="why">${esc(clip(r.rejected || r.reason || '', 140))}</div>
       </div></div>`).join('') : none('거래 기록이 없다 — 루프를 한 번 돌려라');
 
   $('tab-portfolio').innerHTML =

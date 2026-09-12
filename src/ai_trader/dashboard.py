@@ -63,15 +63,26 @@ def lab_state() -> dict:
     snap = broker.snapshot(prices)
     snap["source"] = feed.source
     snap["market_open"] = bool(getattr(feed, "is_open", lambda: True)())
+    # 합성 시장에는 장 시간이 없다. 새벽 3시에 "장 운영중"이라고 적으면 거짓말이 된다.
+    snap["market_label"] = ("합성 시장" if feed.source == "synthetic"
+                            else "장 운영중" if snap["market_open"] else "장 마감")
+    return _named(snap)
+
+
+def _named(snap: dict) -> dict:
+    """보유 종목에 이름을 붙인다. 계좌 스냅샷을 쓰는 화면이 여럿이라 한 곳에서만 한다."""
+    for p in snap.get("positions", []):
+        p["name"] = data.NAMES.get(p["symbol"], p["symbol"])
     return snap
 
 
 def guardrails() -> dict:
     return {
         "sleeves": C.SLEEVES,
-        "max_position_pct": C.MAX_POSITION_PCT * 100,
-        "stop_loss_pct": C.STOP_LOSS_PCT,
-        "daily_loss_kill_pct": -C.DAILY_LOSS_KILL_PCT * 100,
+        # 0.07*100 은 7.000000000000001 이 된다. 화면에 그대로 내보내지 않는다.
+        "max_position_pct": round(C.MAX_POSITION_PCT * 100, 2),
+        "stop_loss_pct": round(C.STOP_LOSS_PCT, 2),
+        "daily_loss_kill_pct": round(-C.DAILY_LOSS_KILL_PCT * 100, 2),
         "max_orders_per_cycle": C.MAX_ORDERS_PER_CYCLE,
         "cycle_seconds": C.CYCLE_SECONDS,
         "benchmark": C.BENCHMARK,
@@ -200,7 +211,7 @@ def portfolio() -> dict:
             div = correlation.diversification({s: c for s, c in series.items() if len(c) >= 31})
         except Exception as exc:
             div = {"unavailable": f"{type(exc).__name__}: {exc}"}
-    return {"snapshot": snap, "diversification": div,
+    return {"snapshot": _named(snap), "diversification": div,
             "fills": [f for f in journal.read("decisions", limit=300)
                       if f.get("status") == "FILLED"][-40:][::-1]}
 
