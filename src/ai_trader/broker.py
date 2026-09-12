@@ -199,6 +199,23 @@ class PaperBroker:
         self.fills.append(fill)
         return fill
 
+    def stop_loss_breaches(self, prices: dict[str, float]) -> list[dict]:
+        """손절선을 넘긴 보유 종목. 판단이 아니라 경계다 — brain 에게 묻지 않는다.
+
+        여기서 목록만 돌려주고 실제 매도는 호출부가 한다. 매도 자체가 실패할 수 있고
+        (호가 없음·원장 거절), 그때도 랩은 서지 않고 기록만 남겨야 하기 때문이다.
+        """
+        out = []
+        for sym, pos in self.positions.items():
+            price = prices.get(sym)
+            if not price or price <= 0:
+                continue  # 가격을 모르면 손실도 모른다. 모른 채로 팔지 않는다.
+            pnl = pos.pnl_pct(price)
+            if pnl <= C.STOP_LOSS_PCT:
+                out.append({"symbol": sym, "sleeve": pos.sleeve, "qty": pos.qty,
+                            "price": price, "pnl_pct": round(pnl, 2)})
+        return out
+
     def check_kill_switch(self, prices: dict[str, float]) -> str | None:
         if self.halted:
             return "already halted"

@@ -22,6 +22,11 @@ START_CASH = float(os.getenv("AI_TRADER_START_CASH", "10_000_000".replace("_", "
 MAX_POSITION_PCT = float(os.getenv("AI_TRADER_MAX_POSITION_PCT", "0.20"))  # 슬리브 대비
 DAILY_LOSS_KILL_PCT = float(os.getenv("AI_TRADER_DAILY_LOSS_KILL", "0.07"))  # 당일 -7% → 랩 정지
 MAX_ORDERS_PER_CYCLE = int(os.getenv("AI_TRADER_MAX_ORDERS", "8"))
+# 종목당 손절. 평가손실이 이 선을 넘으면 brain 에게 묻지 않고 전량 판다.
+# 사람이 정한 경계다 — AI 는 이 값을 못 바꾸고, 이 선을 넘겨 버티는 선택도 못 한다.
+STOP_LOSS_PCT = float(os.getenv("AI_TRADER_STOP_LOSS", "-15.0"))
+# 이겨야 하는 대상. 성과는 이 지수 대비 초과수익으로 잰다.
+BENCHMARK = os.getenv("AI_TRADER_BENCHMARK", "^GSPC")  # S&P500
 LIVE_TRADING = os.getenv("AI_TRADER_LIVE", "0") == "1"  # 1 이어야만 실주문
 
 # --- 관찰 대상 유니버스. AI 가 이 안에서 스스로 고른다(선정도 AI 몫). ---

@@ -148,6 +148,66 @@ def stub_records_never_feed_learning():
         path.write_text("\n".join(lines[:-1]) + ("\n" if lines[:-1] else ""), encoding="utf-8")
 
 
+def stop_loss_is_a_boundary_not_a_suggestion():
+    """-15% 는 사람이 정한 경계다. brain 이 버티기로 해도 넘길 수 없어야 한다."""
+    assert C.STOP_LOSS_PCT == -15.0, f"손절선이 -15% 가 아니다: {C.STOP_LOSS_PCT}"
+    b = bk.PaperBroker.fresh(10_000_000)
+    b.buy("005930", "STABLE", 10, 100_000)
+    assert not b.stop_loss_breaches({"005930": 90_000}), "-10% 인데 손절이 걸렸다"
+    hits = b.stop_loss_breaches({"005930": 85_000})          # 정확히 -15%
+    assert len(hits) == 1 and hits[0]["qty"] == 10, f"-15% 에서 안 걸렸다: {hits}"
+    assert b.stop_loss_breaches({"005930": 50_000}), "-50% 인데 손절이 안 걸렸다"
+    # 가격을 모르면 손실도 모른다 — 모른 채로 팔지 않는다
+    assert not b.stop_loss_breaches({}), "가격 없이 손절을 집행했다"
+    assert not b.stop_loss_breaches({"005930": 0}), "가격 0 으로 손절을 집행했다"
+
+    # 루프가 실제로 정리하는지 (brain 호출 없이)
+    out = loop.enforce_stop_loss(b, {"005930": 85_000})
+    assert out and out[0]["status"] == "FILLED", f"손절 매도가 안 나갔다: {out}"
+    assert "005930" not in b.positions, "손절했는데 보유가 남았다"
+    assert out[0]["brain"] == "guardrail", "손절이 AI 판단으로 기록됐다"
+
+
+def buy_sell_hold_are_all_reachable():
+    """세 가지가 전부 가능해야 한다. HOLD 는 '주문 없음'으로 나타난다."""
+    b = bk.PaperBroker.fresh(10_000_000)
+    snap = b.snapshot({})
+    prices = {"005930": 70_000, "000660": 150_000}
+    base = {"sleeve": "STABLE", "confidence": 1, "reason": ""}
+
+    buys = brain.validate([{"symbol": "005930", "action": "BUY", "quantity": 5, **base}], snap, prices)
+    assert [d["action"] for d in buys] == ["BUY"], "BUY 가 막혔다"
+    b.buy("005930", "STABLE", 5, 70_000)
+
+    snap = b.snapshot(prices)
+    sells = brain.validate([{"symbol": "005930", "action": "SELL", "quantity": 5, **base}], snap, prices)
+    assert [d["action"] for d in sells] == ["SELL"], "SELL 이 막혔다"
+
+    holds = brain.validate([{"symbol": "005930", "action": "HOLD", "quantity": 0, **base}], snap, prices)
+    assert holds == [], "HOLD 가 주문으로 바뀌었다 — 보유는 아무것도 하지 않는 것이다"
+    assert brain.validate([], snap, prices) == [], "무거래 사이클이 불가능하다"
+    assert b.positions["005930"].qty == 5, "HOLD 인데 보유가 바뀌었다"
+
+    b.sell("005930", 5, 71_000)
+    b.buy("005930", "AGGRESSIVE", 3, 69_000)   # 판 종목을 다른 슬리브로 재매수
+    assert b.positions["005930"].sleeve == "AGGRESSIVE", "재매수가 막혔다"
+
+
+def benchmark_refuses_to_invent_alpha():
+    """지수가 없으면 초과수익을 0 으로 채우지 않는다. 없으면 없다고 말해야 한다."""
+    from . import benchmark
+    flat = benchmark.alpha([100.0, 110.0], symbol="^NOSUCHINDEX")
+    assert flat.get("unavailable"), f"없는 지수로 초과수익을 만들었다: {flat}"
+    got = benchmark.alpha([100.0] * 30)
+    if got.get("unavailable"):
+        return  # 아직 지수를 안 받았다 — 그렇다고 말하는 것이 맞다
+    assert got["benchmark"] == C.BENCHMARK == "^GSPC"
+    assert got["alpha_pct"] == round(
+        got["strategy_return_pct"] - got["benchmark_return_pct"], 3), "alpha 계산이 안 맞는다"
+    assert got["beat_benchmark"] == (
+        got["strategy_return_pct"] > got["benchmark_return_pct"]), "승패 판정이 뒤집혔다"
+
+
 def ported_indicators_still_compute_correctly():
     """invest/signals.py 를 옮겨오면서 계산이 깨지지 않았는지. 검증값은 원본 테스트에서 가져왔다."""
     from . import indicators as I
@@ -241,6 +301,9 @@ CHECKS = [
     ("백테스트가 키 없이 돈다", backtest_runs_headless),
     ("재시작해도 계좌가 남는다", state_survives_a_restart),
     ("스텁 기록은 학습에 안 쓰인다", stub_records_never_feed_learning),
+    ("손절 -15% 는 넘을 수 없다", stop_loss_is_a_boundary_not_a_suggestion),
+    ("사기·팔기·보유가 전부 가능하다", buy_sell_hold_are_all_reachable),
+    ("벤치마크 없이 초과수익을 안 지어낸다", benchmark_refuses_to_invent_alpha),
     ("이식한 지표 계산이 안 깨졌다", ported_indicators_still_compute_correctly),
     ("퀀트는 측정만 하고 판단 안 한다", quant_measures_but_never_decides),
     ("키움이 잘못된 주문을 먼저 막는다", kiwoom_rejects_bad_orders_before_sending),

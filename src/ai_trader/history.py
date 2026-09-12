@@ -46,6 +46,43 @@ def resample_4h(hourly: pd.DataFrame) -> pd.DataFrame:
 
 
 @dataclass
+class SymbolView:
+    """6자리 종목코드로 HistoryFeed 를 본다.
+
+    내려받은 데이터는 '005930.KS' 로, 나머지 시스템은 '005930' 으로 종목을 부른다.
+    둘을 잇는 것이 이 클래스의 전부다. 여기서 값을 만들거나 채우지 않는다.
+    """
+    feed: "HistoryFeed"
+    source: str = "history"
+
+    def __post_init__(self):
+        self._map: dict[str, str] = {}
+        for t in self.feed.tickers:
+            self._map.setdefault(t.split(".")[0], t)
+
+    def candles(self, symbol: str, n: int = 60) -> list[dict]:
+        ticker = self._map.get(symbol)
+        return self.feed.candles(ticker, n) if ticker else []
+
+    def price(self, symbol: str) -> float:
+        c = self.candles(symbol, 1)
+        return c[-1]["close"] if c else 0.0
+
+    def prices(self, symbols: list[str]) -> dict[str, float]:
+        return {s: self.price(s) for s in symbols}
+
+    def advance(self) -> bool:
+        return self.feed.advance()
+
+    def is_open(self) -> bool:
+        return True  # 과거 데이터 재생에는 장 시간이 없다
+
+    def missing(self, symbols: list[str]) -> list[str]:
+        """내려받은 데이터에 없는 종목. 조용히 빠지면 백테스트가 거짓말을 한다."""
+        return [s for s in symbols if s not in self._map]
+
+
+@dataclass
 class HistoryFeed:
     """시계 하나를 앞으로 밀면 네 타임프레임이 함께 따라온다."""
     frames: dict[str, pd.DataFrame]

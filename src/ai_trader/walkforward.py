@@ -16,7 +16,7 @@ import json
 
 import pandas as pd
 
-from . import autoresearch, backtest, brain, broker as bk, config as C, history, journal
+from . import autoresearch, backtest, benchmark, brain, broker as bk, config as C, history, journal
 
 SEGMENTS = ("train", "blind", "live")
 
@@ -67,7 +67,7 @@ def run_segment(feed: history.HistoryFeed, name: str, lo, hi, policy_text: str,
     """한 구간을 처음부터 끝까지 태운다. 정책은 구간 안에서 바뀌지 않는다."""
     broker = bk.PaperBroker.fresh(start_cash)
     feed.seek(lo)
-    curve, days, tf_days = [], 0, {tf: 0 for tf in timeframes}
+    curve, days, stopped, tf_days = [], 0, 0, {tf: 0 for tf in timeframes}
 
     while feed.now <= hi:
         prices = feed.prices(tickers)
@@ -75,6 +75,12 @@ def run_segment(feed: history.HistoryFeed, name: str, lo, hi, policy_text: str,
         if prices:
             broker.roll_day(prices, today=f"{name}-{days:04d}")
             broker.check_kill_switch(prices)
+            for hit in broker.stop_loss_breaches(prices):  # 경계는 판단보다 먼저다
+                try:
+                    broker.sell(hit["symbol"], hit["qty"], hit["price"])
+                    stopped += 1
+                except bk.Rejected:
+                    pass
             snapshot = broker.snapshot(prices)
             obs = history.observe_mtf(feed, list(prices), timeframes)
             # "썼다/안 썼다"가 아니라 "구간의 몇 %를 덮었나"를 센다.
@@ -110,6 +116,8 @@ def run_segment(feed: history.HistoryFeed, name: str, lo, hi, policy_text: str,
         "aggressive_return_pct": round(
             (final["sleeves"]["AGGRESSIVE"]["equity"] / (start_cash * C.SLEEVES["AGGRESSIVE"]) - 1) * 100, 3),
         "trades": len(broker.fills),
+        "stop_loss_exits": stopped,
+        "vs_benchmark": benchmark.alpha(curve, end=hi),
         "brain": verdict.get("brain"),
         "timeframe_coverage_pct": {k: round(v / len(curve) * 100, 1)
                                   for k, v in tf_days.items() if v},

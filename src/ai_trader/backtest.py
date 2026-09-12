@@ -10,7 +10,7 @@ import json
 import math
 from dataclasses import dataclass, field
 
-from . import brain, broker as bk, config as C, data, journal
+from . import benchmark, brain, broker as bk, config as C, data, journal
 
 
 @dataclass
@@ -71,19 +71,45 @@ def score(equity_curve: list[float]) -> dict:
     }
 
 
+def source_feed(source: str, paper: bool = True):
+    """백테스트가 무엇을 재생할지 고른다.
+
+    synthetic — 시드 고정 랜덤워크. 배선 점검용이지 시장이 아니다.
+    history   — 내려받은 실제 일봉 (data/bars_1d.parquet). 진짜 백테스트는 이것이다.
+    toss      — 토스 실시세를 그 자리에서 받아 재생.
+    """
+    if source == "history":
+        from . import history
+        hf = history.HistoryFeed.build(timeframes=["1d"])
+        hf.cursor = len(hf.clock) - 1          # 전 구간을 다 보이게 두고, 재생은 ReplayFeed 가 한다
+        view = history.SymbolView(hf)
+        missing = view.missing(C.UNIVERSE)
+        if missing:
+            print(f"[backtest] 데이터에 없는 종목 {len(missing)}개는 빠진다: {missing}")
+        return view
+    return data.make_feed(paper=paper, live_data=(source == "toss"))
+
+
 def run(days: int = 30, policy_text: str | None = None, paper: bool = True,
-        start_cash: float | None = None, quiet: bool = False, mlf=None) -> dict:
-    base = data.make_feed(paper=paper)
+        start_cash: float | None = None, quiet: bool = False, mlf=None,
+        source: str = "synthetic") -> dict:
+    base = source_feed(source, paper=paper)
     feed = ReplayFeed.from_feed(base, C.UNIVERSE, days)
     broker = bk.PaperBroker.fresh(start_cash)
     if not feed.bars:
         raise RuntimeError("재생할 캔들이 없다 — 유니버스나 피드를 확인하라")
 
-    curve, day = [], 0
+    curve, day, stopped = [], 0, 0
     while day < days:
         prices = feed.prices(C.UNIVERSE)
         broker.roll_day(prices, today=f"bt-{day:03d}")
         broker.check_kill_switch(prices)  # 라이브와 같은 가드레일을 태운다
+        for hit in broker.stop_loss_breaches(prices):
+            try:
+                broker.sell(hit["symbol"], hit["qty"], hit["price"])
+                stopped += 1
+            except bk.Rejected:
+                pass
         snapshot = broker.snapshot(prices)
         observations = data.observe(feed, C.UNIVERSE, with_news=False)
         verdict = brain_decide(snapshot, observations, policy_text)
@@ -105,13 +131,15 @@ def run(days: int = 30, policy_text: str | None = None, paper: bool = True,
     prices = feed.prices(C.UNIVERSE)
     final = broker.snapshot(prices)
     result = {
-        "days": len(curve), "paper": paper, "brain": verdict.get("brain"),
+        "days": len(curve), "paper": paper, "source": source, "brain": verdict.get("brain"),
         **score(curve),
         "stable_return_pct": round(
             (final["sleeves"]["STABLE"]["equity"] / (C.START_CASH * C.SLEEVES["STABLE"]) - 1) * 100, 3),
         "aggressive_return_pct": round(
             (final["sleeves"]["AGGRESSIVE"]["equity"] / (C.START_CASH * C.SLEEVES["AGGRESSIVE"]) - 1) * 100, 3),
         "trades": len(broker.fills),
+        "stop_loss_exits": stopped,
+        "vs_benchmark": benchmark.alpha(curve),
         "final": final,
         "equity_curve": [round(v) for v in curve],
     }
@@ -126,12 +154,15 @@ def brain_decide(snapshot, observations, policy_text):
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="ai_trader.backtest", description="한 달 페이퍼 운용")
     ap.add_argument("--days", type=int, default=30)
-    ap.add_argument("--live-data", action="store_true", help="토스 실데이터로 재생 (키 필요)")
+    ap.add_argument("--source", default="history", choices=["history", "synthetic", "toss"],
+                    help="history=내려받은 실제 일봉(기본) / synthetic=랜덤워크 / toss=실시세")
+    ap.add_argument("--live-data", action="store_true", help="--source toss 와 같다 (구버전 호환)")
     args = ap.parse_args(argv)
 
+    source = "toss" if args.live_data else args.source
     with journal.mlflow_run("backtest", params={"days": args.days, "model": C.BRAIN_MODEL,
-                                                "sleeves": C.SLEEVES}) as mlf:
-        result = run(days=args.days, paper=not args.live_data, mlf=mlf)
+                                                "source": source, "sleeves": C.SLEEVES}) as mlf:
+        result = run(days=args.days, paper=not args.live_data, mlf=mlf, source=source)
     journal.jot("backtests", {k: v for k, v in result.items() if k != "final"})
     journal.note("backtests", f"{result['days']}일 페이퍼 운용 ({result['brain']})",
                  "```json\n" + json.dumps(

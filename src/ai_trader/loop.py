@@ -44,6 +44,31 @@ def held_correlation(broker, feed) -> dict:
         return {"unavailable": f"{type(exc).__name__}: {exc}"}
 
 
+def enforce_stop_loss(broker, prices: dict[str, float]) -> list[dict]:
+    """손절선을 넘긴 보유를 전량 정리한다. brain 에게 묻지 않는다 — 사람이 정한 경계다.
+
+    매도가 실패해도 랩은 서지 않는다. 실패했다는 사실을 기록하고 다음 사이클에 다시 시도한다
+    (보유가 남아 있으면 다음 사이클에도 같은 종목이 다시 걸린다).
+    """
+    out = []
+    for hit in broker.stop_loss_breaches(prices):
+        rec = {"symbol": hit["symbol"], "action": "SELL", "sleeve": hit["sleeve"],
+               "quantity": hit["qty"], "confidence": None, "forced": "stop_loss",
+               "reason": f"손절 가드레일 {C.STOP_LOSS_PCT}% — 평가손익 {hit['pnl_pct']}%",
+               "price": round(hit["price"], 1), "brain": "guardrail", "mode": broker.mode}
+        try:
+            fill = broker.sell(hit["symbol"], hit["qty"], hit["price"])
+            rec.update(status="FILLED", realized_pnl=fill.get("realized_pnl"))
+        except bk.Rejected as exc:
+            rec.update(status="REJECTED", reason_rejected=str(exc))
+        except Exception as exc:
+            rec.update(status="ERROR", reason_rejected=f"{type(exc).__name__}: {exc}")
+        journal.jot("incidents", {"kind": "stop_loss", "symbol": hit["symbol"],
+                                  "pnl_pct": hit["pnl_pct"], "status": rec["status"]})
+        out.append(journal.jot("decisions", rec))
+    return out
+
+
 def cycle(broker, feed, mlf=None, step: int | None = None, with_news: bool = True) -> dict:
     """한 사이클: 관측 → 판단 → 집행 → 기록. 어떤 단계가 죽어도 랩은 다음 사이클로 간다."""
     prices = feed.prices(C.UNIVERSE)
@@ -56,11 +81,13 @@ def cycle(broker, feed, mlf=None, step: int | None = None, with_news: bool = Tru
         journal.jot("incidents", {"kind": "kill_switch", "detail": killed,
                                   "equity": snapshot["equity"]})
 
+    # 손절은 brain 보다 먼저다. 경계는 판단을 기다리지 않는다.
+    results = enforce_stop_loss(broker, prices)
+
     observations = data.observe(feed, C.UNIVERSE, with_news=with_news)
     verdict = brain.decide(snapshot, observations, recent_history(feed))
     orders = brain.validate(verdict.get("decisions", []), snapshot, prices)
 
-    results = []
     for d in orders:
         sym = d["symbol"]
         price = prices.get(sym, 0)

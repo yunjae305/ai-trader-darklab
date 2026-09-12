@@ -100,15 +100,17 @@ def evidence_pack(limit: int = 40) -> dict:
     }
 
 
-def run(iters: int = 3, days: int = 30, metric: str = "risk_adjusted") -> list[dict]:
+def run(iters: int = 3, days: int = 30, metric: str = "risk_adjusted",
+        source: str = "history") -> list[dict]:
+    """기본 소스가 history 인 이유: 랜덤워크에 최적화된 정책은 학습이 아니라 과적합이다."""
     C.POLICY.parent.mkdir(parents=True, exist_ok=True)
     history_dir = C.LAB / "policy_history"
     history_dir.mkdir(exist_ok=True)
 
     current = C.POLICY.read_text(encoding="utf-8")
     with journal.mlflow_run("autoresearch-baseline",
-                            params={"days": days, "metric": metric}) as mlf:
-        base = backtest.run(days=days, policy_text=current, quiet=True, mlf=mlf)
+                            params={"days": days, "metric": metric, "source": source}) as mlf:
+        base = backtest.run(days=days, policy_text=current, quiet=True, mlf=mlf, source=source)
     best = base[metric]
     print(f"[autoresearch] baseline {metric}={best} (수익 {base['total_return_pct']}%)")
     journal.jot("experiments", {"iter": -1, "verdict": "BASELINE", "score": best,
@@ -118,7 +120,7 @@ def run(iters: int = 3, days: int = 30, metric: str = "risk_adjusted") -> list[d
     log = []
     for i in range(iters):
         candidate, change = propose(current, evidence_pack())
-        rec = {"iter": i, "change": change, "metric": metric, "baseline": best}
+        rec = {"iter": i, "change": change, "metric": metric, "baseline": best, "source": source}
 
         if candidate.strip() == current.strip():
             rec.update(verdict="REVERT", score=None, verdict_reason="제안이 현재와 동일")
@@ -127,9 +129,9 @@ def run(iters: int = 3, days: int = 30, metric: str = "risk_adjusted") -> list[d
                        verdict_reason="사람이 정한 경계 섹션을 건드림 — 자동 기각")
         else:
             with journal.mlflow_run(f"autoresearch-iter-{i}", params={
-                    "days": days, "metric": metric, "change": change},
+                    "days": days, "metric": metric, "source": source, "change": change},
                     tags={"phase": "candidate"}) as mlf:
-                trial = backtest.run(days=days, policy_text=candidate, quiet=True, mlf=mlf)
+                trial = backtest.run(days=days, policy_text=candidate, quiet=True, mlf=mlf, source=source)
             rec["score"] = trial[metric]
             rec["metrics"] = {k: trial[k] for k in
                               ("total_return_pct", "max_drawdown_pct", "daily_vol_pct", "trades")}
@@ -162,8 +164,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--metric", default="risk_adjusted",
                     choices=["risk_adjusted", "total_return_pct"])
+    ap.add_argument("--source", default="history", choices=["history", "synthetic", "toss"],
+                    help="history=내려받은 실제 일봉(기본). synthetic 은 배선 점검용이다")
     args = ap.parse_args(argv)
-    run(iters=args.iters, days=args.days, metric=args.metric)
+    run(iters=args.iters, days=args.days, metric=args.metric, source=args.source)
     return 0
 
 

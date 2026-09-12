@@ -12,9 +12,11 @@
 |---|---|
 | 안정 60% : 공격 40% 자본 분리 | 어떤 종목이 '안정'이고 '공격'인지 |
 | 한 종목당 슬리브의 20% 상한 | 무엇을 얼마나 살지 |
-| 당일 -7% 시 랩 정지 | 언제 팔지, 언제 그냥 둘지 |
+| **종목당 손절 -15%** | 언제 팔지, 언제 그냥 둘지 (단, -15% 안에서) |
+| 당일 -7% 시 랩 정지 | 이번 사이클에 아무것도 안 할지 |
+| 이겨야 할 벤치마크 (S&P500) | 그것을 어떻게 이길지 |
 | 관찰 유니버스 | 그 안에서 무엇을 볼지 |
-| 사이클 주기 | 이번 사이클에 아무것도 안 할지 |
+| 사이클 주기 | |
 
 `lab/policy.md` 가 트레이더의 유일한 기억이다. **v0 은 의도적으로 비어 있다** — 사람이 전략을
 안 써줬기 때문이다. 한 달 운용 뒤 `autoresearch` 가 실제 기록을 읽고 이 파일을 채워 나간다.
@@ -50,8 +52,10 @@ python3 -m ai_trader.loop --paper --once       # 한 사이클: 관측 → 판�
 python3 -m ai_trader.loop --paper              # 무인 연속 운용 (15분 주기, 합성 시장)
 python3 -m ai_trader.loop --paper --live-data  # 모의투자: 토스 실시세 + 페이퍼 계좌
 python3 -m ai_trader.loop --kiwoom --live-data # 키움 모의계좌로 실제 주문 (돈 안 걸림)
-python3 -m ai_trader.backtest --days 30      # 한 달 페이퍼 운용
-python3 -m ai_trader.autoresearch --iters 3  # 자기개선 루프
+python3 -m ai_trader.benchmark               # S&P500 지수 수집 (초과수익 계산용)
+python3 -m ai_trader.backtest --days 30      # 한 달 운용 (기본: 내려받은 실제 일봉)
+python3 -m ai_trader.backtest --days 30 --source synthetic   # 랜덤워크 = 배선 점검용
+python3 -m ai_trader.autoresearch --iters 3  # 자기개선 루프 (기본: 실제 일봉)
 
 # 실데이터 · 멀티 타임프레임 · 워크포워드
 python3 -m ai_trader.download --market kr,us --top 300      # 일봉 전종목 + 인트라데이 상위 300
@@ -114,6 +118,32 @@ selfcheck 가 이 경계를 지킨다 — 관측 팩 전체를 재귀로 훑어 
 `invest` 의 판단·전략층(`exits.py` `screener.py` `plan.py` `review.py` `analyst.py` `guard.py`
 `server.py` `fundamentals.py` `fx.py` `youtube.py`)은 옮기지 않았다. 사람이 쓴 매매 규칙이라
 이 랩의 전제와 정면으로 부딪힌다.
+
+## 손절 -15% 와 벤치마크
+
+두 가지가 `config.py` 와 `policy.md` 의 경계 섹션에 못박혀 있다. AI 는 이 둘을 못 바꾼다.
+
+- **종목당 손절 -15%** (`STOP_LOSS_PCT`). 평가손실이 -15% 에 닿은 보유는 brain 에게 묻지 않고
+  전량 정리된다. 손절은 판단보다 **먼저** 실행되므로 "조금만 더 버틴다"가 성립하지 않는다.
+  가격을 모르는 종목은 팔지 않는다 — 모른 채로 손실을 단정하지 않는다.
+  매도가 거절되면 기록하고 다음 사이클에 다시 걸린다.
+- **벤치마크 S&P500** (`BENCHMARK=^GSPC`). 모든 백테스트 결과에 `vs_benchmark` 가 붙는다.
+  지수 데이터가 없으면 `alpha=0` 으로 채우지 않고 `unavailable` 로 남긴다 —
+  벤치마크 없는 초과수익은 거짓말이다.
+
+지수를 이기는 것은 목표이지 보장이 아니다. 이 레포가 하는 일은 이기는 것이 아니라 **재는 것**이고,
+이겼는지 아닌지는 `research/backtests.jsonl` 의 `alpha_pct` 가 말한다.
+
+## 백테스트는 무엇을 재생하는가
+
+| `--source` | 재생 대상 | 쓸 곳 |
+|---|---|---|
+| `history` (기본) | `data/bars_1d.parquet` — 내려받은 실제 일봉 | 진짜 백테스트 |
+| `synthetic` | 시드 고정 랜덤워크 | 배선 점검. **시장이 아니다** |
+| `toss` | 토스 실시세를 그 자리에서 받아 재생 | 최신 구간 확인 |
+
+`autoresearch` 도 같은 소스를 쓴다. 기본이 `history` 인 이유는 하나다 —
+랜덤워크에 최적화된 정책은 학습이 아니라 노이즈 과적합이다.
 
 ## 자기개선 루프 (오토리서치)
 

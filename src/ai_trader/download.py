@@ -38,24 +38,44 @@ OTHER_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
 
 
 def kr_universe() -> pd.DataFrame:
-    """KIND 상장법인목록. 로그인 불필요."""
-    r = requests.get(KIND_URL, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
-    r.raise_for_status()
-    df = pd.read_html(io.StringIO(r.text), header=0)[0]
+    """KIND 상장법인목록. 로그인 불필요.
+
+    보드를 하나씩 명시해서 받는다. 파라미터 없이 한 번에 받으면 KIND 가 조용히 한 보드만
+    돌려주는 일이 있었고(2026-09 실측: 코스피 847종목이 통째로 누락된 채 저장됨), 그러면
+    백테스트가 코스닥만 보면서 전종목을 본 척한다. 보드별로 받고, 하나라도 비면 세운다.
+    """
+    # KIND 는 코스피를 "유가"(유가증권)로 적는다. "코스피"로 찾으면 847종목이 통째로 빠진다.
+    BOARD = {"유가": ".KS", "코스피": ".KS", "코스닥": ".KQ", "코넥스": ".KQ"}
+    frames = []
+    for market_type, label in (("stockMkt", "코스피"), ("kosdaqMkt", "코스닥")):
+        r = requests.get(f"{KIND_URL}&marketType={market_type}", timeout=60,
+                         headers={"User-Agent": "Mozilla/5.0"})
+        r.raise_for_status()
+        part = pd.read_html(io.StringIO(r.text), header=0)[0]
+        if part.empty:
+            raise RuntimeError(f"KIND 가 {label}({market_type}) 를 빈 목록으로 줬다 — "
+                               "여기서 세우지 않으면 그 보드 전체가 조용히 빠진다")
+        frames.append(part)
+    df = pd.concat(frames, ignore_index=True)
+
     df["code"] = df["종목코드"].astype(str).str.zfill(6)
     df = df[df["code"].str.fullmatch(r"\d{6}")]  # 숫자 6자리만 — 스팩 신형코드 등 제외
-    # KIND 는 코스피를 "유가"(유가증권)로 적는다. "코스피"로 찾으면 843종목이 통째로 빠진다.
-    BOARD = {"유가": ".KS", "코스피": ".KS", "코스닥": ".KQ", "코넥스": ".KQ"}
     known = df["시장구분"].isin(BOARD)
     if not known.all():
         raise RuntimeError(
             f"KIND 에 모르는 시장구분이 있다: {sorted(set(df.loc[~known, '시장구분']))} — "
             "매핑을 고치기 전에는 종목이 조용히 누락된다")
-    df = df[known]
-    return pd.DataFrame({
+    df = df[known].drop_duplicates("code")
+    out = pd.DataFrame({
         "symbol": df["code"], "ticker": df["code"] + df["시장구분"].map(BOARD),
         "name": df["회사명"], "market": "kr", "board": df["시장구분"],
     }).reset_index(drop=True)
+
+    suffixes = set(out["ticker"].str.split(".").str[-1])
+    if suffixes != {"KS", "KQ"}:
+        raise RuntimeError(f"국장 유니버스에 한 보드만 있다: {suffixes} — "
+                           "코스피나 코스닥이 통째로 빠진 채로는 받지 않는다")
+    return out
 
 
 def us_universe() -> pd.DataFrame:
