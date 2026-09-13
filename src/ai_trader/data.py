@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from . import config as C, indicators, news as news_feed, quant
+from . import config as C, indicators, news as news_feed, quant, sectors
 
 KST = timezone(timedelta(hours=9))
 # ponytail: KRX 정규장만 본다. NXT 연장세션(08:00~20:00)이 필요해지면 여기만 넓힌다.
@@ -316,6 +316,7 @@ def observe(feed, symbols: list[str], with_news: bool = True,
             "symbol": sym,
             "market": C.market_of(sym),
             "name": NAMES.get(sym, sym),
+            "sector": sectors.of(sym),  # 모르면 빈 문자열. 추측해서 채우지 않는다.
             "closes_60d": [round(c, 1) for c in closes],
             "observed": describe(closes, vols),
             "news": news(sym) if with_news else [],

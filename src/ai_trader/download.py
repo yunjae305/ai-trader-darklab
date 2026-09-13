@@ -66,9 +66,11 @@ def kr_universe() -> pd.DataFrame:
             f"KIND 에 모르는 시장구분이 있다: {sorted(set(df.loc[~known, '시장구분']))} — "
             "매핑을 고치기 전에는 종목이 조용히 누락된다")
     df = df[known].drop_duplicates("code")
+    # KIND 가 업종을 같이 준다 — 섹터 때문에 따로 수집할 필요가 없다 (실측 125종류).
     out = pd.DataFrame({
         "symbol": df["code"], "ticker": df["code"] + df["시장구분"].map(BOARD),
         "name": df["회사명"], "market": "kr", "board": df["시장구분"],
+        "sector": df["업종"].fillna("").astype(str).str.strip(),
     }).reset_index(drop=True)
 
     suffixes = set(out["ticker"].str.split(".").str[-1])

@@ -420,6 +420,25 @@ def feeds_follow_the_keys_you_have():
     assert "AI_TRADER_LIVE=0" in CK.ENV_TEMPLATE, ".env 기본값이 실주문 허용이면 안 된다"
 
 
+def sector_comes_from_data_not_from_a_human():
+    """섹터는 사람이 입력하지 않는다. KIND 업종(국장) · yfinance sector(미장) 에서 온다."""
+    from . import sectors as S
+    table = S.load(refresh=True)
+    assert isinstance(table, dict)
+    if table:  # 유니버스를 아직 안 받았으면 비어 있는 게 맞다
+        assert S.of("005930"), "국장 대장주 섹터가 비었다 — universe.parquet 에 sector 열이 없다"
+    assert S.of("없는종목코드") == "", "모르는 종목의 섹터를 지어냈다"
+
+    pack = data.observe(data.SyntheticFeed(), C.UNIVERSE[:2], with_news=False)
+    assert all("sector" in r for r in pack), "관측 팩에 섹터가 안 실렸다"
+    assert all(isinstance(r["sector"], str) for r in pack), "섹터가 문자열이 아니다"
+
+    # 섹터는 관측치다 — 여기서 매매 규칙이 되면 판단 주체가 둘이 된다
+    src = Path(S.__file__).read_text(encoding="utf-8")
+    for banned in ("BUY", "SELL", "buy_above", "sell_below", "STOP_LOSS"):
+        assert banned not in src, f"섹터 모듈이 매매 판단을 한다: {banned}"
+
+
 def orders_route_by_market():
     """국내는 키움, 해외는 토스. 잘못 라우팅된 주문은 엉뚱한 계좌에서 체결된다."""
     assert C.market_of("005930") == "KR" and C.market_of("247540") == "KR"
@@ -500,6 +519,7 @@ CHECKS = [
     ("시작 버튼이 실주문을 못 켠다", start_button_cannot_turn_on_live_trading),
     ("토스 경로가 전부 문서에 있다", every_toss_path_exists_in_the_docs),
     ("시세가 가진 키를 따라간다", feeds_follow_the_keys_you_have),
+    ("섹터는 사람이 안 넣는다", sector_comes_from_data_not_from_a_human),
     (".env 키가 실제로 읽힌다", env_file_actually_reaches_config),
     ("LLM 키 없어도 규칙으로 매매한다", no_llm_key_still_trades_on_rules),
     ("장 마감 판정이 추측을 안 한다", market_gate_knows_when_it_is_guessing),

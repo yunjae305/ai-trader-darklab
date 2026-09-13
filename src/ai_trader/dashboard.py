@@ -182,6 +182,7 @@ def radar() -> dict:
         obs = o.get("observed") or {}
         rows.append({
             "symbol": o["symbol"], "name": o.get("name"), "market": o.get("market"),
+            "sector": o.get("sector") or "",
             "score": q.get("score"),
             "unavailable": q.get("unavailable") or ind.get("unavailable"),
             "reasons": q.get("reasons", []),

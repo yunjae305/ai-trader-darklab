@@ -355,7 +355,7 @@ function renderRadar(d) {
     d.rows.map(r => `<div class="row">${ring(r.score)}
       <div class="grow">
         <div class="line1"><span class="nm">${esc(r.name)}</span><span class="cd">${esc(r.symbol)}</span></div>
-        <div class="sub2">${esc(r.market)}${r.alignment ? ' · ' + esc(r.alignment) : ''}</div>
+        <div class="sub2">${esc(r.sector || r.market)}${r.sector ? ' · ' + esc(r.market) : ''}</div>
         <div class="why">${r.unavailable ? esc(r.unavailable)
           : `RSI ${r.rsi == null ? '—' : Math.round(r.rsi)} ${esc(r.rsi_zone || '')} · ADX ${esc(r.adx || '—')} · 매물대 ${esc(r.room || '—')}`}</div>
         <div class="why" style="font-size:11.5px">${esc(clip((r.reasons || []).join(' · '), 130))}</div>
