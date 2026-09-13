@@ -378,6 +378,48 @@ def start_button_cannot_turn_on_live_trading():
         assert path not in D.ROUTES, f"{path} 가 GET 으로도 열린다"
 
 
+def every_toss_path_exists_in_the_docs():
+    """코드가 부르는 토스 경로가 문서에 실재해야 한다. 지어낸 경로는 키를 넣는 순간 404 다."""
+    import re
+    doc = (C.RESEARCH / "toss_openapi_reference.md").read_text(encoding="utf-8")
+    documented = set(re.findall(r"`(?:GET|POST) (/[^`{]*)", doc))
+    called = set()
+    for mod in ("broker", "data"):
+        src = (Path(__file__).parent / f"{mod}.py").read_text(encoding="utf-8")
+        called |= set(re.findall(r'TOSS_BASE\}(/[\w/.-]+)', src))
+        called |= set(re.findall(r'_get\("(/[\w/.-]+)"', src))
+    assert called, "토스 경로를 하나도 못 찾았다 — 이 검사가 헛돌고 있다"
+    unknown = {p for p in called if not any(p.startswith(d.rstrip("/")) for d in documented)}
+    assert not unknown, f"문서에 없는 토스 경로를 부른다: {sorted(unknown)}"
+
+
+def feeds_follow_the_keys_you_have():
+    """시세는 주문과 같은 창구에서 온다. 키가 한쪽만 있으면 그쪽만 실시세다."""
+    kr_only = data.RoutedFeed(kr=data.SyntheticFeed(), us=None)
+    assert kr_only._feed("005930") is not None, "국내 종목이 국내 창구로 안 간다"
+    assert kr_only._feed("AAPL") is None, "창구도 없는데 해외 종목에 피드를 붙였다"
+    assert kr_only.price("AAPL") == 0.0, "모르는 가격을 0 이 아닌 값으로 지어냈다"
+    assert kr_only.candles("AAPL") == []
+    assert kr_only._feed("깨진표기") is None, "이상한 표기를 추측해서 라우팅했다"
+    assert "KR=키움" in kr_only.source, kr_only.source
+
+    # 가격 0 인 종목은 주문이 되면 안 된다 — validate 가 걸러야 한다
+    b = bk.PaperBroker.fresh(10_000_000)
+    out = brain.validate([{"symbol": "005930", "action": "BUY", "sleeve": "STABLE",
+                           "quantity": 1, "confidence": 1, "reason": ""}],
+                         b.snapshot({}), {"005930": 0})
+    assert out == [], "가격 0 인 종목에 주문이 나갔다"
+
+    if not (C.have_broker_keys() or C.have_kiwoom_keys()):
+        assert data.make_feed(paper=True, live_data=True).source == "synthetic"
+
+    from . import check as CK
+    for key in ("TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET", "APP_KEY_MOCK", "APP_SECRET_MOCK",
+                "KIWOOM_MODE", "ANTHROPIC_API_KEY", "AI_TRADER_LIVE"):
+        assert key in CK.ENV_TEMPLATE, f".env 안내에 {key} 가 빠졌다"
+    assert "AI_TRADER_LIVE=0" in CK.ENV_TEMPLATE, ".env 기본값이 실주문 허용이면 안 된다"
+
+
 def orders_route_by_market():
     """국내는 키움, 해외는 토스. 잘못 라우팅된 주문은 엉뚱한 계좌에서 체결된다."""
     assert C.market_of("005930") == "KR" and C.market_of("247540") == "KR"
@@ -456,6 +498,8 @@ CHECKS = [
     ("국내는 키움·해외는 토스로 갈린다", orders_route_by_market),
     ("죽은 뉴스 피드를 조용히 안 넘긴다", news_reports_dead_feeds_instead_of_going_quiet),
     ("시작 버튼이 실주문을 못 켠다", start_button_cannot_turn_on_live_trading),
+    ("토스 경로가 전부 문서에 있다", every_toss_path_exists_in_the_docs),
+    ("시세가 가진 키를 따라간다", feeds_follow_the_keys_you_have),
     (".env 키가 실제로 읽힌다", env_file_actually_reaches_config),
     ("LLM 키 없어도 규칙으로 매매한다", no_llm_key_still_trades_on_rules),
     ("장 마감 판정이 추측을 안 한다", market_gate_knows_when_it_is_guessing),

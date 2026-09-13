@@ -98,7 +98,56 @@ def describe() -> list[tuple[str, str, str]]:
     return rows + _data()
 
 
+ENV_TEMPLATE = """\
+# --- 판단 엔진 (없으면 퀀트 점수로 매매한다) ---
+ANTHROPIC_API_KEY=
+
+# --- 토스증권 Open API (해외 주문 + 국내·해외 시세) ---
+# WTS 로그인 > 설정 > Open API 에서 발급. 같은 화면의 '허용 IP 관리'에 이 PC 의 IP 도 등록해야 한다.
+TOSS_CLIENT_ID=
+TOSS_CLIENT_SECRET=
+# 비워두면 GET /api/v1/accounts 로 알아서 찾는다. 계좌가 여럿이면 쓸 accountSeq 를 적어라.
+TOSS_ACCOUNT=
+
+# --- 키움증권 REST (국내 주문 + 국내 시세) ---
+# demo = mockapi.kiwoom.com (모의투자, 돈 안 걸림) / real = api.kiwoom.com
+KIWOOM_MODE=demo
+APP_KEY_MOCK=
+APP_SECRET_MOCK=
+# 실계좌용 (KIWOOM_MODE=real 일 때만 읽는다)
+APP_KEY=
+APP_SECRET=
+
+# --- 실주문 스위치. 1 이어야만 돈이 걸리는 주문이 나간다 ---
+# 키움 demo 는 이 값과 무관하게 나간다 (모의투자 서버라 돈이 안 걸린다).
+AI_TRADER_LIVE=0
+
+# --- 선택 ---
+# GS_QUANT_PATH=
+# AI_TRADER_DASH_TOKEN=
+"""
+
+
+def env_template() -> str:
+    return ENV_TEMPLATE
+
+
 def main(argv=None) -> int:
+    import argparse
+    ap = argparse.ArgumentParser(prog="ai_trader.check", description="연결 점검 (조회만)")
+    ap.add_argument("--write-env", action="store_true",
+                    help="빈 .env 를 만든다. 이미 있으면 덮지 않는다")
+    args = ap.parse_args(argv)
+
+    if args.write_env:
+        path = C.ROOT / ".env"
+        if path.exists():
+            print(f"[check] {path} 가 이미 있다 — 덮지 않는다. 직접 열어서 채워라")
+            return 1
+        path.write_text(ENV_TEMPLATE, encoding="utf-8")
+        print(f"[check] {path} 를 만들었다. 값을 채운 뒤 python3 -m ai_trader.check 를 다시 돌려라")
+        return 0
+
     rows = describe()
     width = max(len(label) for _, label, _ in rows)
     print("[check] 조회만 한다 — 주문은 내지 않는다\n")
@@ -115,6 +164,11 @@ def main(argv=None) -> int:
         print(f"[check] 막힌 항목 {len(blocked)}개:")
         for b in blocked:
             print(f"    - {b}")
+    if not C.ENV_LOADED:
+        path = C.ROOT / ".env"
+        print(f"\n[check] {path} 가 없다. 아래를 그대로 붙여넣고 값만 채우면 된다:\n")
+        print("\n".join("    " + ln for ln in ENV_TEMPLATE.splitlines()))
+        print("\n[check] 한 줄로 만들려면:  python3 -m ai_trader.check --write-env")
     return 1 if blocked else 0
 
 

@@ -24,14 +24,26 @@
 ## 설치
 
 ```bash
-pip3 install --user anthropic mlflow requests
-cp .env.example .env   # 키를 넣는다. 없어도 전 구간이 돈다.
+pip3 install --user anthropic mlflow requests yfinance pandas
 export PYTHONPATH=src
 
-python3 -m ai_trader.check   # 무엇이 되고 무엇이 안 되는지 먼저 본다 (조회만, 주문 안 냄)
+python3 -m ai_trader.check --write-env   # 빈 .env 를 만든다 (있으면 안 덮는다)
+#  → 값을 채운 뒤
+python3 -m ai_trader.check               # 무엇이 되고 무엇이 안 되는지 본다
 
-python3 -m ai_trader.dashboard --lan   # 폰에서 보는 대시보드 (조회 전용)
+python3 -m ai_trader.dashboard --lan     # 폰에서 보는 대시보드
 ```
+
+`.env` 가 없으면 `check` 가 붙여넣을 내용을 그대로 출력한다. 채워야 하는 것은 이게 전부다:
+
+| 넣는 것 | 없으면 |
+|---|---|
+| `TOSS_CLIENT_ID` / `TOSS_CLIENT_SECRET` | 해외 주문 불가 · 시세가 합성으로 |
+| `APP_KEY_MOCK` / `APP_SECRET_MOCK` (키움 모의) | 국내 주문 불가 |
+| `ANTHROPIC_API_KEY` | 퀀트 점수로 매매 (`quant-fallback`) |
+
+`TOSS_ACCOUNT` 는 **비워둬도 된다** — `GET /api/v1/accounts` 로 스스로 찾는다.
+토스 WTS 의 **허용 IP 관리**에 이 PC 의 IP 를 등록해야 한다. 안 하면 전부 403 이다.
 
 `.env` 는 `config.py` 가 import 시점에 자동으로 읽는다. 셸에 이미 있는 값이 파일보다 우선이다.
 
@@ -105,8 +117,9 @@ python3 -m ai_trader.walkforward --train-years 3 --blind-years 1 --live-years 1
 - 토스 주문은 언제나 `AI_TRADER_LIVE=1` 이 있어야 나간다.
 - **키가 없는 시장의 주문은 거절된다.** 조용히 넘어가지 않는다 — 안 나간 주문을 체결된 것처럼
   장부에 적으면 그 뒤 모든 숫자가 거짓말이 된다. 한 시장 키만 있으면 그 시장만 돈다.
-- 시세는 양쪽 다 토스가 준다. 이식한 키움 클라이언트에 일봉 조회 TR(`ka10081`)이 없어서인데,
-  붙이면 국내 시세도 키움으로 옮길 수 있다.
+- **시세도 주문과 같은 창구에서 받는다.** 토스는 국내·해외를 다 주므로 토스 키만 있으면 토스
+  하나로 끝나고, 둘 다 있으면 국내는 키움(`ka10081` 수정주가 일봉)·해외는 토스로 갈린다.
+  키움 키만 있으면 국내만 실시세이고 해외 종목은 가격 0 이 되어 주문이 만들어지지 않는다.
 
 기본 유니버스는 국내 20종목이다. `AI_TRADER_UNIVERSE` 에 영문 티커를 섞으면 해외도 같이 본다
 (예: `AI_TRADER_UNIVERSE=005930,000660,AAPL,NVDA`). 무엇을 살지는 여전히 brain 이 정한다.

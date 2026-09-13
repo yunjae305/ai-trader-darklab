@@ -18,6 +18,7 @@ BUY, SELL, MODIFY, CANCEL = "kt10000", "kt10001", "kt10002", "kt10003"
 ORDR = "/api/dostk/ordr"
 ACNT = "/api/dostk/acnt"
 MRKCOND = "/api/dostk/mrkcond"
+CHART = "/api/dostk/chart"
 
 # 매매구분 (trde_tp) — 자주 쓰는 것만. 전체 목록은 키움 문서 참조.
 TRDE = {"지정가": "0", "시장가": "3", "조건부지정가": "5", "최유리": "6", "최우선": "7",
@@ -103,6 +104,18 @@ class Kiwoom:
     def quote(self, symbol):
         """주식호가 [ka10004]"""
         return self._post(MRKCOND, {"stk_cd": symbol}, api_id="ka10004")
+
+    def candles(self, symbol, count=200):
+        """주식일봉차트 [ka10081]. 과거→최신 순의 공통 캔들로 돌려준다.
+
+        upd_stkpc_tp=1 은 수정주가다. 액면분할·유상증자를 반영하지 않으면 과거 지표가 튄다.
+        응답은 최신→과거 순이고 부호·콤마가 붙어 온다 — 정규화는 indicators.from_kiwoom 이 한다.
+        """
+        r = self._post(CHART, {"stk_cd": symbol, "base_dt": "", "upd_stkpc_tp": "1"},
+                       api_id="ka10081")
+        rows = r.get("stk_dt_pole_chart_qry") or r.get("output") or []
+        from .indicators import from_kiwoom
+        return from_kiwoom(rows)[-count:]
 
     # --- writes ------------------------------------------------------------
     def order(self, symbol, side, quantity, price=None, *, trde_tp=None, cond_uv=""):

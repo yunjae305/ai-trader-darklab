@@ -217,10 +217,87 @@ def news(symbol: str, limit: int = 4, ttl: int = 900) -> list[dict]:
     return news_feed.for_symbol(symbol, NAMES.get(symbol, symbol), limit=limit, ttl=ttl)
 
 
+@dataclass
+class KiwoomFeed:
+    """키움 국내 일봉. 주문과 같은 창구에서 시세도 받는다 (ka10081)."""
+    source = "kiwoom"
+
+    def __post_init__(self):
+        from .kiwoom import Kiwoom
+        self.api = Kiwoom()
+
+    def candles(self, symbol: str, n: int = 60) -> list[dict]:
+        return self.api.candles(symbol, n)
+
+    def price(self, symbol: str) -> float:
+        c = self.candles(symbol, 1)
+        return c[-1]["close"] if c else 0.0
+
+    def prices(self, symbols: list[str]) -> dict[str, float]:
+        return {s: self.price(s) for s in symbols}
+
+    def advance(self) -> bool:
+        return False
+
+    def is_open(self) -> bool:
+        # 키움에는 휴장일 조회 TR 이 없다 — 요일로 대체하므로 공휴일은 못 거른다.
+        now = datetime.now(KST)
+        return session_now(now) and now.weekday() < 5
+
+
+@dataclass
+class RoutedFeed:
+    """시세도 주문과 같은 증권사에서 받는다 — 국내는 키움, 해외는 토스.
+
+    한쪽 키만 있으면 그쪽 시장만 실시세다. 없는 쪽은 0 을 주고, 0 인 종목은
+    brain.validate 가 걸러낸다 — 모르는 가격으로 주문을 만들지 않는다.
+    """
+    kr: object = None
+    us: object = None
+    source: str = "routed"
+
+    def __post_init__(self):
+        have = [n for n, f in (("KR=키움", self.kr), ("US=토스", self.us)) if f is not None]
+        self.source = ("routed:" + "+".join(have)) if have else "routed:none"
+
+    def _feed(self, symbol: str):
+        try:
+            return self.kr if C.market_of(symbol) == "KR" else self.us
+        except ValueError:
+            return None
+
+    def candles(self, symbol: str, n: int = 60) -> list[dict]:
+        f = self._feed(symbol)
+        return f.candles(symbol, n) if f is not None else []
+
+    def price(self, symbol: str) -> float:
+        f = self._feed(symbol)
+        return f.price(symbol) if f is not None else 0.0
+
+    def prices(self, symbols: list[str]) -> dict[str, float]:
+        return {s: self.price(s) for s in symbols}
+
+    def advance(self) -> bool:
+        return False
+
+    def is_open(self) -> bool:
+        return any(f.is_open() for f in (self.kr, self.us) if f is not None)
+
+
 def make_feed(paper: bool = True, live_data: bool = False):
-    """모의투자 = 페이퍼 회계 + 실시세. live_data 가 그 조합을 만든다."""
-    if (not paper or live_data) and C.have_broker_keys():
-        return TossFeed()
+    """모의투자 = 페이퍼 회계 + 실시세. live_data 가 그 조합을 만든다.
+
+    시세는 주문과 같은 창구에서 받는다. 토스는 국내·해외를 다 주므로 토스 키만 있으면
+    토스 하나로 끝나고, 키움 키만 있으면 국내만 실시세다(해외는 창구가 없다).
+    """
+    if paper and not live_data:
+        return SyntheticFeed()
+    toss = TossFeed() if C.have_broker_keys() else None
+    kiwoom = KiwoomFeed() if C.have_kiwoom_keys() else None
+    if toss is not None and kiwoom is None:
+        return toss
+    if kiwoom is not None:
+        return RoutedFeed(kr=kiwoom, us=toss)
     return SyntheticFeed()
 
 

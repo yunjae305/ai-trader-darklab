@@ -295,11 +295,12 @@ class TossVenue(Venue):
     def __init__(self):
         self._token = ""
         self._token_exp = 0.0
+        self._seq = C.TOSS_ACCOUNT
         self.session = requests.Session()
 
     @staticmethod
     def unavailable() -> str:
-        return "" if C.have_broker_keys() else "TOSS_CLIENT_ID/SECRET/ACCOUNT 없음"
+        return "" if C.have_broker_keys() else "TOSS_CLIENT_ID / TOSS_CLIENT_SECRET 없음"
 
     def token(self) -> str:
         if self._token and time.time() < self._token_exp - 60:
@@ -316,10 +317,34 @@ class TossVenue(Venue):
         self._token_exp = time.time() + int(body.get("expires_in", 3600))
         return self._token
 
+    def accounts(self) -> list[dict]:
+        """계좌 목록. 계좌·주문 API 가 요구하는 accountSeq 가 여기서 나온다."""
+        r = self.session.get(f"{C.TOSS_BASE}/api/v1/accounts",
+                             headers={"Authorization": f"Bearer {self.token()}"}, timeout=10)
+        r.raise_for_status()
+        return _first_list(r.json(), "accounts", "result", "items")
+
+    def account_seq(self) -> str:
+        """TOSS_ACCOUNT 가 비어 있으면 계좌 목록에서 찾아낸다.
+
+        사람이 accountSeq 를 미리 알 방법이 마땅치 않다 — 키만 넣으면 되게 하려면
+        여기서 직접 물어보는 편이 낫다. .env 에 적어두면 그 값이 우선이다.
+        """
+        if self._seq:
+            return self._seq
+        rows = self.accounts()
+        if not rows:
+            raise Rejected("토스 계좌 목록이 비어 있다 — WTS 에서 Open API 사용 계좌를 확인하라")
+        seq = rows[0].get("accountSeq") or rows[0].get("account_seq") or rows[0].get("seq")
+        if seq is None:
+            raise Rejected(f"계좌 응답에서 accountSeq 를 못 찾았다: {sorted(rows[0])}")
+        self._seq = str(seq)
+        return self._seq
+
     def _headers(self, account: bool = False) -> dict:
         h = {"Authorization": f"Bearer {self.token()}"}
         if account:
-            h["X-Tossinvest-Account"] = C.TOSS_ACCOUNT
+            h["X-Tossinvest-Account"] = self.account_seq()
         return h
 
     def holdings(self) -> dict:
