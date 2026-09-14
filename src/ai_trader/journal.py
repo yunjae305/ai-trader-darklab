@@ -10,7 +10,7 @@ import contextlib
 import json
 from datetime import datetime
 
-from . import config as C
+from . import config as C, telegram
 
 
 def _ts() -> str:
@@ -18,11 +18,16 @@ def _ts() -> str:
 
 
 def jot(stream: str, record: dict) -> dict:
-    """research/<stream>.jsonl 에 한 줄 추가하고, 기록된 레코드를 돌려준다."""
+    """research/<stream>.jsonl 에 한 줄 추가하고, 기록된 레코드를 돌려준다.
+
+    기록이 먼저고 알림은 그 다음이다. 텔레그램이 죽어도 기록은 이미 남아 있어야 한다 —
+    기록은 랩의 유일한 증인이고, 알림은 그 증인을 사람에게 읽어 주는 것일 뿐이다.
+    """
     C.RESEARCH.mkdir(parents=True, exist_ok=True)
     record = {"ts": _ts(), **record}
     with (C.RESEARCH / f"{stream}.jsonl").open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    telegram.on_record(stream, record)
     return record
 
 

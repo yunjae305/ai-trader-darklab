@@ -44,6 +44,16 @@ def _dart() -> list[tuple[str, str, str]]:
     return [(WARN, "DART 재무제표", "DART_API_KEY 없음 · 국내 종목 상세실적만 비활성")]
 
 
+def _telegram() -> list[tuple[str, str, str]]:
+    """알림 경로. 루프는 사람 없이 도니까, 이게 꺼져 있으면 사고를 몇 시간 뒤에 안다."""
+    from . import telegram as T
+    if T.enabled():
+        return [(OK, "알림", "텔레그램 · 체결·손절·킬스위치·엔진 오류")]
+    if C.TELEGRAM_TOKEN:
+        return [(WARN, "알림", "TELEGRAM_CHAT_ID 없음 · `python3 -m ai_trader.telegram --chat-id`")]
+    return [(WARN, "알림", "TELEGRAM_BOT_TOKEN 없음 · 사고가 나도 화면을 열어야만 안다")]
+
+
 def _venue(market: str) -> list[tuple[str, str, str]]:
     cls = bk.VENUES[market]
     label = f"{market} 주문"
@@ -105,7 +115,7 @@ def _data() -> list[tuple[str, str, str]]:
 
 
 def describe() -> list[tuple[str, str, str]]:
-    rows = _env() + _brain() + _dart() + _feed()
+    rows = _env() + _brain() + _dart() + _telegram() + _feed()
     for market in C.MARKETS:
         rows += _venue(market)
     return rows + _data()
@@ -130,6 +140,13 @@ TOSS_ACCOUNT=
 
 # --- DART 전자공시 (국내 종목 상세실적) ---
 DART_API_KEY=
+
+# --- 텔레그램 알림 (체결·손절·킬스위치·엔진 오류) ---
+# 1) 텔레그램에서 @BotFather 에게 /newbot → 토큰을 받는다
+# 2) 만든 봇에게 아무 메시지나 보낸 뒤 `python3 -m ai_trader.telegram --chat-id`
+# 알림은 보내기만 한다 — 이 경로로 주문은 나가지 않는다.
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
 
 # --- 키움증권 REST (국내 주문 + 국내 시세) ---
 # demo = mockapi.kiwoom.com (모의투자, 돈 안 걸림) / real = api.kiwoom.com

@@ -87,6 +87,11 @@ KIWOOM_SECRET = os.getenv(f"APP_SECRET{_KW_SUFFIX}", "")
 # --- DART 전자공시 (재무제표 상세실적) ---
 DART_API_KEY = os.getenv("DART_API_KEY", "")
 
+# --- 텔레그램 알림. 루프는 사람 없이 도니까 사고가 나면 이 경로로만 닿는다. ---
+# 토큰은 봇을 조종할 수 있는 자격증명이다 — .env 에만 두고 코드에 적지 않는다.
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
 # --- 판단 엔진 ---
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 BRAIN_MODEL = os.getenv("AI_TRADER_MODEL", "claude-opus-5")

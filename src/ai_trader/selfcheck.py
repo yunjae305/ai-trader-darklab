@@ -351,6 +351,51 @@ def kiwoom_rejects_bad_orders_before_sending():
     assert C.have_kiwoom_keys() or C.have_broker_keys(), "키도 없이 실계좌 브로커가 만들어졌다"
 
 
+def telegram_notifies_but_never_orders():
+    """알림은 관찰 장치다 — 랩의 일부가 아니다.
+
+    두 가지를 못 하게 막아 둔다.
+      1) 텔레그램이 죽거나 꺼져 있어도 기록은 그대로 남아야 한다. 알림이 기록을
+         막으면 랩의 유일한 증인이 사라진다.
+      2) 텔레그램 경로로 주문이 나가면 안 된다. 봇 토큰이 새는 순간 그게 계좌를
+         여는 문이 된다. 무엇을 사고 팔지는 brain 이, 실주문 여부는 .env 가 정한다.
+    """
+    from . import telegram as T
+
+    src = Path(T.__file__).read_text(encoding="utf-8")
+    body = src.split('"""', 2)[2]          # 모듈 독스트링은 빼고 코드만 본다
+    # 주문번호를 '표시'하는 것과 주문을 '내는' 것은 다르다 — 후자만 막는다.
+    for banned in ("import broker", "from .broker", "from .kiwoom", "import kiwoom",
+                   ".buy(", ".sell(", ".order(", ".send(symbol", "AI_TRADER_LIVE"):
+        assert banned not in body, f"알림 모듈이 주문을 낼 수 있다: {banned}"
+
+    # 꺼져 있으면 조용히 아무 일도 안 한다 — 예외를 올리지 않는다.
+    assert T.enabled() is False or C.TELEGRAM_TOKEN, "토큰 없이 켜졌다고 한다"
+    T.on_record("decisions", {"status": "FILLED", "symbol": "005930", "quantity": 1})
+    T.on_record("incidents", {"kind": "kill_switch"})
+
+    # 알림이 터져도 기록은 남는다.
+    sent = []
+    original_enabled, original_send = T.enabled, T.send
+    T.enabled = lambda: True
+    T.send = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("텔레그램 죽음"))
+    original_research = C.RESEARCH
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            C.RESEARCH = Path(tmp)
+            rec = journal.jot("decisions", {"symbol": "005930", "status": "FILLED"})
+            assert rec["symbol"] == "005930", rec
+            written = (Path(tmp) / "decisions.jsonl").read_text(encoding="utf-8")
+            assert "005930" in written, "알림이 터지자 기록이 사라졌다"
+    finally:
+        C.RESEARCH, T.enabled, T.send = original_research, original_enabled, original_send
+
+    # 평범한 기록까지 다 보내면 알림이 배경소음이 된다 — 보낼 것만 보낸다.
+    assert T._decision_text({"status": "HOLD"}) is None, "체결도 아닌 것을 알린다"
+    assert "market_closed" not in T.INCIDENT_KINDS, "매일 나오는 장 마감을 알린다"
+    assert sent == []
+
+
 def every_trade_is_fully_recorded():
     """한 번의 매매가 남기는 기록에 구멍이 없어야 한다.
 
@@ -738,6 +783,7 @@ CHECKS = [
     ("키움이 잘못된 주문을 먼저 막는다", kiwoom_rejects_bad_orders_before_sending),
     ("계좌 화면이 숫자를 안 지어낸다", account_screen_never_invents_numbers),
     ("매매 기록에 구멍이 없다", every_trade_is_fully_recorded),
+    ("알림은 보내기만 한다", telegram_notifies_but_never_orders),
     ("키움 유량 제한을 안 태운다", kiwoom_does_not_burn_its_rate_limit),
     ("국내는 키움·해외는 토스로 갈린다", orders_route_by_market),
     ("죽은 뉴스 피드를 조용히 안 넘긴다", news_reports_dead_feeds_instead_of_going_quiet),
