@@ -40,24 +40,30 @@ python3 -m ai_trader.dashboard --lan     # 폰에서 보는 대시보드
 |---|---|
 | `TOSS_CLIENT_ID` / `TOSS_CLIENT_SECRET` | 해외 주문 불가 · 시세가 합성으로 |
 | `APP_KEY_MOCK` / `APP_SECRET_MOCK` (키움 모의) | 국내 주문 불가 |
-| `ANTHROPIC_API_KEY` | 퀀트 점수로 매매 (`quant-fallback`) |
+| `DART_API_KEY` | 국내 종목 상세실적을 못 봄 |
+| `ANTHROPIC_API_KEY` | Claude CLI, 이어서 Codex CLI 사용; 둘 다 없으면 퀀트 점수로 매매 |
 
 `TOSS_ACCOUNT` 는 **비워둬도 된다** — `GET /api/v1/accounts` 로 스스로 찾는다.
 토스 WTS 의 **허용 IP 관리**에 이 PC 의 IP 를 등록해야 한다. 안 하면 전부 403 이다.
 
 `.env` 는 `config.py` 가 import 시점에 자동으로 읽는다. 셸에 이미 있는 값이 파일보다 우선이다.
 
-**증권사 키만 넣어도 전 구간이 돈다.** `ANTHROPIC_API_KEY` 가 없으면 판단이 무작위 스텁으로
-떨어지는 게 아니라, 이식해 온 퀀트 점수(`quant.py`)가 판단을 맡는다 — 기록에
-`brain="quant-fallback"` 이 찍힌다. 자세한 것은 아래 [LLM 키가 없을 때](#llm-키가-없을-때).
+**증권사 키만 넣어도 전 구간이 돈다.** `ANTHROPIC_API_KEY` 가 없어도 이 PC에 로그인된
+Claude CLI가 있으면 라이브 판단과 오토리서치 정책 제안을 맡는다. Claude 호출이 한도 초과 등으로
+실패하면 로그인된 Codex CLI가 이어받는다. 두 CLI도 없을 때만 이식해 온 퀀트 점수(`quant.py`)가
+판단하고 기록에 `brain="quant-fallback"` 이 찍힌다.
 
 `.env` 에 넣는 값:
 
 | 변수 | 용도 | 없으면 |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | 판단 엔진 | **퀀트 점수로 매매** (`quant-fallback`) |
+| `ANTHROPIC_API_KEY` | 판단 API (선택) | Claude CLI, 그것도 없으면 `quant-fallback` |
+| `AI_TRADER_BRAIN` | `auto` / `api` / `cli` / `codex` / `off` 선택 | `auto` |
+| `AI_TRADER_CODEX_MODEL` | Codex CLI 모델 고정 (선택) | Codex 사용자 설정 모델 |
 | `AI_TRADER_QUANT_BUY` / `_SELL` | 퀀트 대역의 매수·매도선 | 65 / 40 |
-| `TOSS_CLIENT_ID` / `TOSS_CLIENT_SECRET` / `TOSS_ACCOUNT` | 토스 시세·주문 | 합성 시장으로 대체 |
+| `TOSS_CLIENT_ID` / `TOSS_CLIENT_SECRET` | 토스 시세·주문 | 합성 시장으로 대체 |
+| `TOSS_ACCOUNT` | 사용할 토스 `accountSeq` | 계좌 목록 첫 항목 자동 선택 |
+| `DART_API_KEY` | 국내 종목 6개년 재무제표 | 상세실적에 이유와 함께 미연결 표시 |
 | `KIWOOM_MODE` (`demo`/`real`) | 키움 모의투자 / 실계좌 | `demo` |
 | `APP_KEY_MOCK` / `APP_SECRET_MOCK` | 키움 모의투자 키 | 국내 주문 거절 |
 | `APP_KEY` / `APP_SECRET` | 키움 실계좌 키 (`KIWOOM_MODE=real` 일 때만) | 국내 주문 거절 |
@@ -65,13 +71,13 @@ python3 -m ai_trader.dashboard --lan     # 폰에서 보는 대시보드
 | `GS_QUANT_PATH` | gs-quant 소스 경로 (선택) | stdlib 로 같은 값 계산 |
 | `AI_TRADER_LIVE=1` | 실계좌 주문 허용 | 실주문 안 나감 |
 
-키가 없으면: 시장은 `SyntheticFeed`(시드 고정 랜덤워크), 판단은 `offline-stub` 으로 대체된다.
-스텁은 **AI 판단이 아니며**, 모든 기록에 `brain: "offline-stub"` 이 찍혀 절대 섞이지 않는다.
+증권사 키가 없으면 시장은 `SyntheticFeed`(시드 고정 랜덤워크)로 바뀐다. LLM과 퀀트 점수가
+모두 없는 배선 점검에서만 `offline-stub`이 쓰이고, 이 기록은 실제 AI 판단과 섞이지 않는다.
 
 ## 실행
 
 ```bash
-python3 -m ai_trader.selfcheck                 # 자체 점검 22항목
+python3 -m ai_trader.selfcheck                 # 자체 점검 전체
 python3 -m ai_trader.loop --paper --once       # 한 사이클: 관측 → 판단 → 집행 → 기록
 python3 -m ai_trader.loop --paper              # 무인 연속 운용 (15분 주기, 합성 시장)
 python3 -m ai_trader.loop --paper --live-data  # 모의투자: 토스 실시세 + 페이퍼 계좌
@@ -182,26 +188,32 @@ stdlib 만 쓴다 — 빌드 도구도 프레임워크도 CDN 도 없다. 실행
 | 탭 | 내용 | 데이터원 |
 |---|---|---|
 | Command | 라이브 데스크(평가·손익·예수금·포지션), 가드레일, 전략별 성과, 지수·환율, AI 판단과 근거, 뉴스, 인시던트 | `lab/paper_state.json`, `research/{cycles,decisions,backtests,incidents}.jsonl`, `benchmark.quotes()`, `data.news()` |
-| Radar | 퀀트 점수 순위 + 지표(RSI·정배열·ADX·매물대) | `data.observe()` |
-| Portfolio | 슬리브별 자산, 보유 종목, 상관관계, **실시간 거래 기록**(체결·거부·손절) | `paper_state.json`, `decisions.jsonl`, `correlation` |
+| Radar | 퀀트 점수 순위 + 지표(RSI·정배열·ADX·매물대), 길게 눌러 DART 상세실적 | `data.observe()`, OpenDART |
+| Portfolio | 증권사 실계좌 조회, 슬리브별 자체 장부, 상관관계, **실시간 거래 기록**(체결·거부·손절) | 토스·키움 잔고 API, `paper_state.json`, `decisions.jsonl`, `correlation` |
 | Control | 연결 점검, 사람이 정한 경계, 유니버스 | `check.describe()`, `config` |
 
 거래 기록은 체결(`FILLED`)·거부(`REJECTED`)·오류(`ERROR`)를 한 타임라인에 담고, 손절
 가드레일이 낸 주문은 따로 표시된다(`brain=guardrail`).
 
-**만들지 않은 화면이 있다.** 첨부받은 화면 중 DART 재무제표(상세실적)와 섹터 분류는 이 레포에
-데이터원이 없다. 숫자를 지어내지 않으려고 화면 자체를 만들지 않고, Control 탭에 그 사실을 적었다.
-지수·환율은 못 받으면 0 이 아니라 `unavailable` 로 표시된다.
+Radar의 종목을 길게 누르면 OpenDART의 재무상태표·손익계산서·현금흐름표 6개년을 보여준다.
+국내 섹터는 시세 응답에 포함된 업종명을 쓰며, 해외 종목은 DART 대상이 아니라고 표시한다.
+지수·환율과 재무제표는 못 받으면 0이 아니라 `unavailable` 사유를 표시한다.
 
-## LLM 키가 없을 때
+## 판단 백엔드
 
-판단 주체가 세 단계로 떨어진다. 어느 단계였는지는 모든 기록의 `brain` 필드에 남는다.
+`AI_TRADER_BRAIN=auto`가 기본이다. 어느 경로였는지는 모든 기록의 `brain` 필드에 남는다.
 
 | `brain` | 언제 | 무엇으로 판단하나 |
 |---|---|---|
 | `claude-opus-5` | `ANTHROPIC_API_KEY` 있음 | LLM 이 `policy.md` 를 들고 판단 |
-| `quant-fallback` | 키 없음 + 관측 팩에 퀀트 점수 있음 | **퀀트 점수 0~100** (매수 ≥65, 매도 <40) |
-| `offline-stub` | 키 없음 + 점수도 없음 | 결정론적 해시. **판단 아님 — 배선 점검용** |
+| `claude-opus-5(cli)` | API 키 없음 + Claude CLI 정상 | 로그인된 CLI가 같은 정책으로 라이브 판단 |
+| `codex(cli)` | Claude CLI 실패 또는 `AI_TRADER_BRAIN=codex` | 로그인된 Codex CLI 구독으로 판단 |
+| `quant-fallback` | LLM 없음 + 관측 팩에 퀀트 점수 있음 | **퀀트 점수 0~100** (매수 ≥65, 매도 <40) |
+| `offline-stub` | LLM 없음 + 점수도 없음 | 결정론적 해시. **판단 아님 — 배선 점검용** |
+
+CLI는 호출마다 컨텍스트 비용이 크므로 라이브 사이클과 오토리서치 제안에만 쓴다. `auto`에서는
+Claude CLI가 실패하면 같은 호출을 Codex CLI로 다시 시도한다. 반복 호출이 많은 백테스트는 API를
+명시한 경우에만 LLM을 쓰고, CLI만 있으면 퀀트 경로로 재생한다.
 
 `quant-fallback` 은 스텁이 아니다. 실제로 규칙대로 매매한다 — 점수 높은 순으로 훑어 매수선을
 넘으면 사고, 보유 중 매도선 아래로 떨어지면 판다. 슬리브는 일변동성으로 가른다.
@@ -213,7 +225,7 @@ stdlib 만 쓴다 — 빌드 도구도 프레임워크도 CDN 도 없다. 실행
   결과로 LLM 의 생각을 고치면 앞뒤가 안 맞는다.
 - LLM 이 "과거 내 판단"으로 되돌려받는 기록에서도 빠진다. 손절 가드레일(`guardrail`) 기록도 같다.
 
-`ANTHROPIC_API_KEY` 를 넣는 순간 판단 주체는 다시 LLM 하나가 되고, 임계값은 아예 읽히지 않는다.
+API나 CLI가 판단을 맡는 동안 퀀트 임계값은 매매 결정에 쓰이지 않는다.
 
 ## 실계좌 장부 동기화
 

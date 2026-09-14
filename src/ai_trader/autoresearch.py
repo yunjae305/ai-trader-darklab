@@ -13,7 +13,7 @@ import re
 import shutil
 from datetime import datetime
 
-from . import backtest, config as C, journal
+from . import backtest, brain, config as C, journal
 
 GUARD_HEADING = "## 지켜야 하는 경계"
 
@@ -47,33 +47,36 @@ def _guard_intact(candidate: str, current: str) -> bool:
 
 def propose(current: str, evidence: dict) -> tuple[str, str]:
     """(새 policy 전문, 무엇을 왜 바꿨는지) 를 돌려준다."""
-    if not C.have_brain_key():
+    backend = C.brain_backend()
+    if backend == "none":
         stub = current.replace(
             "_(비어 있음 — 한 달 운용 뒤 autoresearch 가 채운다)_",
-            f"- [offline-stub {datetime.now():%Y-%m-%d %H:%M}] 키가 없어 실제 제안이 아니다. "
+            f"- [offline-stub {datetime.now():%Y-%m-%d %H:%M}] LLM이 없어 실제 제안이 아니다. "
             "배선 점검용 변경.")
-        return stub, "offline-stub: ANTHROPIC_API_KEY 없음 — 기계만 돌린 것"
-    try:
-        import anthropic
-    except ImportError:
-        return current, "anthropic 미설치 — 제안 없음"
-
-    client = anthropic.Anthropic()
+        return stub, "offline-stub: LLM 없음 — 기계만 돌린 것"
     prompt = (
         "# 현재 policy.md\n\n```markdown\n" + current + "\n```\n\n"
         "# 실제 운용 기록 (근거는 여기서만 끌어와라)\n\n```json\n"
         + json.dumps(evidence, ensure_ascii=False, indent=2)[:60000] + "\n```\n\n"
         "policy.md 전문을 다시 써라. 마지막 줄에 `CHANGE: <무엇을 왜 바꿨는지 한 줄>` 을 덧붙여라."
     )
-    resp = client.messages.create(
-        model=C.RESEARCH_MODEL, max_tokens=16000,
-        system=PROPOSE_SYSTEM.format(guard=GUARD_HEADING),
-        messages=[{"role": "user", "content": prompt}],
-        output_config={"effort": "high"},
-    )
-    if resp.stop_reason == "refusal":
-        return current, "refusal — 제안 없음"
-    text = "".join(b.text for b in resp.content if b.type == "text")
+    system = PROPOSE_SYSTEM.format(guard=GUARD_HEADING)
+    if backend in ("cli", "codex"):
+        text, _, _ = brain.local_complete(system, prompt, claude_model=C.RESEARCH_MODEL)
+    else:
+        try:
+            import anthropic
+        except ImportError:
+            return current, "anthropic 미설치 — 제안 없음"
+        client = anthropic.Anthropic()
+        resp = client.messages.create(
+            model=C.RESEARCH_MODEL, max_tokens=16000, system=system,
+            messages=[{"role": "user", "content": prompt}],
+            output_config={"effort": "high"},
+        )
+        if resp.stop_reason == "refusal":
+            return current, "refusal — 제안 없음"
+        text = "".join(b.text for b in resp.content if b.type == "text")
     note = ""
     m = re.search(r"^CHANGE:\s*(.+)$", text, re.M)
     if m:
@@ -88,7 +91,6 @@ def _real(rows: list[dict]) -> list[dict]:
     스텁뿐 아니라 퀀트 대역(quant-fallback)과 손절 가드레일도 제외한다.
     policy.md 는 LLM 의 생각이고, 사람이 정한 임계값의 결과로 그것을 고치면 앞뒤가 안 맞는다.
     """
-    from . import brain
     return [r for r in rows if brain.is_ai(r.get("brain"))]
 
 

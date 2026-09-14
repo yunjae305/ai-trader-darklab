@@ -83,6 +83,12 @@ h1{font-size:27px;font-weight:800;margin:0;letter-spacing:-1px}
 .ring{width:50px;height:50px;flex:0 0 50px;border-radius:50%;display:grid;place-items:center}
 .ring span{background:var(--card);width:41px;height:41px;border-radius:50%;display:grid;
   place-items:center;font-weight:800;font-size:15px}
+.alloc{display:grid;grid-template-columns:150px 1fr;gap:20px;align-items:center;margin:6px 0 18px}
+.donut{width:150px;height:150px;border-radius:50%;position:relative;display:grid;place-items:center}
+.donut:after{content:"";position:absolute;width:88px;height:88px;border-radius:50%;background:var(--card)}
+.donut b{position:relative;z-index:1;font-size:15px;text-align:center;line-height:1.25}
+.legend{display:grid;gap:9px}.legend .lg{display:flex;align-items:center;gap:8px;font-size:13px}
+@media(max-width:420px){.alloc{grid-template-columns:125px 1fr}.donut{width:125px;height:125px}.donut:after{width:74px;height:74px}}
 
 /* 지수 */
 .grid-ix{display:grid;grid-template-columns:repeat(auto-fit,minmax(142px,1fr));gap:10px}
@@ -120,6 +126,39 @@ h1{font-size:27px;font-weight:800;margin:0;letter-spacing:-1px}
 .warn{background:#FBE6D2;color:#8A4A08;border-radius:14px;padding:14px;font-size:13.5px;margin-top:14px}
 a.plain{color:inherit;text-decoration:none}
 
+/* 상세실적 시트 (DartLab) */
+.sheet{position:fixed;inset:0;background:var(--bg);z-index:20;overflow-y:auto;
+  padding:0 0 40px;display:none}
+.sheet.on{display:block}
+.shhd{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:22px 0 18px}
+.shhd .ttl{font-weight:800;font-size:18px;letter-spacing:-.4px;text-align:center;flex:1}
+.icobtn{width:46px;height:46px;border-radius:50%;border:0;background:var(--card);color:var(--green);
+  font-size:20px;cursor:pointer;flex:0 0 auto;box-shadow:0 2px 6px rgba(0,0,0,.05)}
+.dl{display:flex;align-items:center;gap:12px;margin:6px 0 18px}
+.dl .mk{width:34px;height:34px;flex:0 0 auto}
+.dl .b1{font:800 25px/1 Georgia,"Times New Roman",serif;letter-spacing:-.5px}
+.dl .b2{color:var(--green);font-weight:800;font-size:14px;margin-left:7px}
+.dl .b3{color:var(--dim);font-size:13px;margin-top:4px}
+.who{background:var(--card);border-radius:18px;padding:17px 19px;display:inline-block;margin-bottom:16px}
+.who .n1{font-size:23px;font-weight:800;letter-spacing:-.7px}
+.who .n2{color:var(--dim);font-size:13px;margin-top:5px}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;background:var(--tile);
+  border-radius:13px;padding:4px;margin-bottom:18px}
+.seg button{border:0;background:transparent;color:var(--dim);font:700 14px system-ui;
+  padding:11px 4px;border-radius:10px;cursor:pointer}
+.seg button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.fin h3{font:800 19px/1 system-ui;color:var(--green);margin:0 0 5px;letter-spacing:-.4px}
+.fin .yr{color:var(--dim);font-size:13px;margin:0 0 14px}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table.fn{border-collapse:collapse;width:100%;font-size:14px}
+table.fn th,table.fn td{padding:15px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.fn th{color:var(--dim);font-weight:700;font-size:13.5px;text-align:right}
+table.fn th:first-child,table.fn td:first-child{text-align:left;position:sticky;left:0;
+  background:var(--card);white-space:normal;min-width:132px}
+table.fn td{text-align:right;font-family:ui-monospace,Menlo,monospace;font-weight:600}
+table.fn td.nil{color:#C8C0B2;font-weight:400}
+table.fn tr:last-child th,table.fn tr:last-child td{border-bottom:0}
+
 /* 하단 탭 */
 nav{position:fixed;left:0;right:0;bottom:0;background:rgba(240,235,227,.97);
   backdrop-filter:blur(14px);padding:9px 12px calc(9px + env(safe-area-inset-bottom))}
@@ -134,7 +173,7 @@ nav svg{width:21px;height:21px}
 <body>
 <div class="wrap">
   <div class="hd">
-    <div><h1>AI주식자동매매</h1><p class="tag" id="sub">다크랩 · 기록을 읽고 엔진을 켠다</p></div>
+    <div><h1>AI주식자동매매</h1><p class="tag" id="sub">부자가 되는 가장 빠른 지름길</p></div>
     <button class="rf" onclick="loadAll()">⟳</button>
   </div>
   <section id="tab-command" class="tab on"></section>
@@ -142,6 +181,15 @@ nav svg{width:21px;height:21px}
   <section id="tab-portfolio" class="tab"></section>
   <section id="tab-control" class="tab"></section>
 </div>
+
+<div class="sheet" id="sheet"><div class="wrap">
+  <div class="shhd">
+    <button class="icobtn" onclick="closeFin()">‹</button>
+    <span class="ttl">상세실적</span>
+    <button class="icobtn" id="fin-rf" onclick="openFin(FIN_SYM, true)">⟳</button>
+  </div>
+  <div id="fin-body"></div>
+</div></div>
 
 <nav><div class="in">
   <button class="on" data-tab="command"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="7.5" height="7.5" rx="2.2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2.2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2.2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2.2"/></svg>Command</button>
@@ -156,6 +204,8 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 const won = n => n == null ? '—' : Math.round(n).toLocaleString('ko-KR') + '원';
 const num = n => n == null ? '—' : Math.round(n).toLocaleString('ko-KR');
+const marketMoney = (n, market) => n == null ? '—' : market === 'US'
+  ? '$' + Number(n).toFixed(2) : Math.round(n).toLocaleString('ko-KR') + '원';
 const pct = n => n == null ? '—' : (n > 0 ? '+' : '') + Number(n).toFixed(2) + '%';
 const cls = n => n == null ? 'flat' : n > 0 ? 'up' : n < 0 ? 'down' : 'flat';
 const hhmm = ts => ts ? String(ts).slice(5, 16).replace('T', ' ') : '';
@@ -166,7 +216,8 @@ const clip = (s, n) => { s = String(s ?? ''); if (s.length <= n) return s;
 const CHEV = '<span class="chev">›</span>';
 
 async function api(p) {
-  const r = await fetch(p + '?t=' + encodeURIComponent(T));
+  // 경로에 이미 쿼리가 있으면 ? 를 또 붙이면 안 된다 — 토큰이 앞 값에 먹힌다.
+  const r = await fetch(p + (p.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(T));
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
   return r.json();
 }
@@ -242,11 +293,21 @@ function renderCommand(d) {
           <path d="M1 8h6l3-6 4 12 3.5-8 3 4h12"/></svg></div>
     </div>
     ${lab.source === 'synthetic' ? banner('합성 시장으로 돌고 있다', '토스 키가 없다 — 이 숫자는 실제 시세가 아니다', d.generated_at) : ''}
-    ${!d.has_llm_key ? banner('퀀트 점수로 매매 중', `ANTHROPIC_API_KEY 없음 · brain=quant-fallback`, '') : ''}
+    ${d.brain_backend === 'none' ? banner('퀀트 점수로 매매 중', 'Claude/Codex 사용 불가 · brain=quant-fallback', '') : ''}
+    <div class="tiles" style="margin-top:14px">
+      ${Object.entries(d.market_sessions || {}).map(([mk, s]) => `<div class="tile">
+        <div class="k"><i class="dot" style="background:${s.open ? 'var(--green)' : 'var(--red)'}"></i>${mk === 'KR' ? '국내장' : '미국장'}</div>
+        <div class="v" style="font-size:20px">${s.open ? '진행 중' : '마감'}</div>
+        <div class="n mono">${esc(s.local_time)} ${esc(s.zone)}</div></div>`).join('')}
+    </div>
     <div class="tiles">
-      ${tile('var(--green)', '총 평가', won(lab.equity), '자체 장부 · ' + esc(lab.mode))}
-      ${tile('var(--red)', '손익', pct(lab.day_return_pct), '기준 ' + won(lab.day_start_equity), cls(lab.day_return_pct))}
-      ${tile('var(--green)', '예수금', won(Object.values(lab.sleeves).reduce((a, s) => a + s.cash, 0)), '안정+공격 합산')}
+      ${tile('var(--green)', '총 평가', won(lab.equity), lab.mode === 'kiwoom-demo'
+        ? '키움 모의계좌 · 추정자산' : '자체 장부 · ' + esc(lab.mode))}
+      ${tile('var(--red)', '당일 손익', pct(lab.day_return_pct), lab.mode === 'kiwoom-demo'
+        ? `기준 ${won(lab.day_start_equity)} · 누적 ${pct(lab.total_return_pct)} (${won(lab.pnl_amount)})`
+        : '기준 ' + won(lab.day_start_equity), cls(lab.day_return_pct))}
+      ${tile('var(--green)', '예수금', won(lab.cash ?? Object.values(lab.sleeves).reduce((a, s) => a + s.cash, 0)),
+        lab.mode === 'kiwoom-demo' ? '키움 주문가능금액' : '안정+공격 합산')}
       ${tile('var(--amber)', '오픈 포지션', String(lab.positions.length), '보유 종목')}
     </div></div>`;
 
@@ -263,6 +324,8 @@ function renderCommand(d) {
       <div class="kv"><span>손절</span><b class="neg">${g.stop_loss_pct}%</b></div>
       <div class="kv"><span>당일 정지선</span><b class="neg">${g.daily_loss_kill_pct}%</b></div>
       <div class="kv"><span>종목당 상한</span><b>${g.max_position_pct}%</b></div>
+      <div class="kv"><span>국내 자본 상한</span><b>${Math.round(g.market_weights.KR * 100)}%</b></div>
+      <div class="kv"><span>해외 자본 상한</span><b>${Math.round(g.market_weights.US * 100)}%</b></div>
     </div>
     ${engineBlock(d.engine, g)}`);
 
@@ -279,7 +342,7 @@ function renderCommand(d) {
       </div>`).join('')}</div>`
       : none('백테스트 기록이 없다 — python3 -m ai_trader.backtest'));
 
-  const idx = card('Market Index', '지수와 환율 압력',
+  const idx = card('Market Index', '코스피 · 코스닥 · S&P 500',
     `<div class="grid-ix">${d.indices.map(i => `
       <div class="ix"><div class="k">${esc(i.name)}</div>
         ${i.unavailable
@@ -288,6 +351,14 @@ function renderCommand(d) {
              <div class="n ${cls(i.change_pct)}">${i.change_pct > 0 ? '▲' : i.change_pct < 0 ? '▼' : '·'} ${pct(i.change_pct)}</div>
              ${i.unit ? `<div class="n" style="color:var(--dim);font-weight:500">${esc(i.unit)}</div>` : ''}`}
       </div>`).join('')}</div>`);
+
+  const fx = card('Exchange Rate', '원화 기준 환율',
+    `<div class="grid-ix">${(d.fx || []).map(i => `<div class="ix">
+      <div class="k">${i.symbol === 'KRW=X' ? 'USD/KRW' : 'JPY/KRW'}</div>
+      ${i.unavailable ? `<div class="v">—</div><div class="n">${esc(i.unavailable)}</div>`
+        : `<div class="v">${Number(i.last).toLocaleString('ko-KR', {maximumFractionDigits:2})}</div>
+           <div class="n ${cls(i.change_pct)}">${pct(i.change_pct)} · ${esc(i.unit || '원')}</div>`}
+    </div>`).join('')}</div>`);
 
   const ai = card('AI Analysis', '최근 분석과 주문 판단',
     d.ai_analysis.length ? d.ai_analysis.map(a => `
@@ -324,7 +395,7 @@ function renderCommand(d) {
       <div class="grow"><b>${esc(i.kind)}</b>
       <div class="why">${esc(i.detail || i.symbol || i.status || '')}</div></div></div>`).join('')) : '';
 
-  $('tab-command').innerHTML = desk + ctrl + stats + idx + ai + insight + inc;
+  $('tab-command').innerHTML = desk + ctrl + stats + idx + fx + ai + insight + inc;
 }
 function tile(color, k, v, n, vcls) {
   return `<div class="tile"><div class="k"><i class="dot" style="background:${color}"></i>${esc(k)}</div>
@@ -342,33 +413,171 @@ const ICON = {
   globe: `<svg class="g" viewBox="0 0 24 24" fill="none" stroke="#0F9D76" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.8 2.6 15.2 0 18M12 3c-2.6 2.8-2.6 15.2 0 18"/></svg>`,
 };
 
+/* --------------------------------------------------------------- DartLab */
+let FIN_SYM = '', FIN_DIV = 'BS', FIN_DATA = null;
+
+/* 길게 누르면 상세실적. 손가락이 움직이면 스크롤이므로 취소한다. */
+function holdable(el, symbol) {
+  let timer = null, sx = 0, sy = 0;
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  el.addEventListener('pointerdown', e => {
+    sx = e.clientX; sy = e.clientY;
+    timer = setTimeout(() => { timer = null; openFin(symbol); }, 480);
+  });
+  el.addEventListener('pointermove', e => {
+    if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) cancel();
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => el.addEventListener(t, cancel));
+  el.addEventListener('contextmenu', e => e.preventDefault());
+}
+
+async function openFin(symbol, force) {
+  if (!symbol) return;
+  FIN_SYM = symbol;
+  $('sheet').classList.add('on');
+  $('sheet').scrollTop = 0;
+  if (force || !FIN_DATA || FIN_DATA.symbol !== symbol) {
+    FIN_DIV = 'BS';
+    FIN_DATA = null;
+    $('fin-body').innerHTML = none('DART 에서 재무제표를 받는 중…');
+    try { FIN_DATA = await api('/api/financials?symbol=' + encodeURIComponent(symbol)); }
+    catch (e) { return $('fin-body').innerHTML = none('불러오기 실패: ' + e.message); }
+  }
+  renderFin();
+}
+function closeFin() { $('sheet').classList.remove('on'); }
+function finTab(div) { FIN_DIV = div; renderFin(); }
+
+function renderFin() {
+  const d = FIN_DATA;
+  if (!d) return;
+  const brand = `<div class="dl">
+      <svg class="mk" viewBox="0 0 24 24" fill="none" stroke="#0F9D76" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5.5-5.5 3.5 3.5L21 6"/>
+        <path d="M15 6h6v6"/></svg>
+      <div><div><span class="b1">DartLab</span><span class="b2">Finance</span></div>
+        <div class="b3">Financial statement intelligence</div></div>
+    </div>`;
+  const mk = /^\d{6}$/.test(d.symbol || '') ? 'KR' : 'US';  // config.market_of 와 같은 규칙
+  const who = `<div class="who"><div class="n1">${esc(d.name || d.symbol)}</div>
+      <div class="n2">${esc(d.symbol)} · ${mk}${d.unavailable ? ''
+        : ` · ${d.base_year}년 기준 · 단위 ${esc(d.unit)}`}</div></div>`;
+
+  if (d.unavailable)
+    return $('fin-body').innerHTML = brand + who + none(d.unavailable);
+
+  const t = d.tables[FIN_DIV];
+  const cell = v => v == null ? '<td class="nil">—</td>'
+    : `<td>${Number(v).toLocaleString('ko-KR', {minimumFractionDigits: 1, maximumFractionDigits: 1})}</td>`;
+  const table = t.rows.length ? `<div class="scroll"><table class="fn">
+      <tr><th>항목</th>${d.years.map(y => `<th>${y}</th>`).join('')}</tr>
+      ${t.rows.map(r => `<tr><td>${esc(r.account)}</td>${r.values.map(cell).join('')}</tr>`).join('')}
+    </table></div>` : none('이 재무제표는 공시에 없다');
+
+  $('fin-body').innerHTML = brand + who + `<div class="card">
+    <div class="seg">${Object.entries({BS: '재무상태표', IS: '손익계산서', CF: '현금흐름표'})
+      .map(([k, v]) => `<button class="${k === FIN_DIV ? 'on' : ''}" onclick="finTab('${k}')">${v}</button>`)
+      .join('')}</div>
+    <div class="fin"><h3>${esc(t.label)}</h3>
+      <p class="yr">${d.base_year}년 기준 · 단위 ${esc(d.unit)}</p>${table}</div></div>`;
+}
+
 /* ------------------------------------------------------------------ Radar */
 function renderRadar(d) {
   const ring = s => {
     if (s == null) return `<div class="ring" style="background:var(--tile)"><span style="color:var(--dim)">—</span></div>`;
-    const c = s >= d.buy_above ? '#33C463' : s < d.sell_below ? 'var(--red)' : 'var(--amber)';
+    const c = s >= 70 ? '#33C463' : s < 40 ? 'var(--red)' : 'var(--amber)';
     return `<div class="ring" style="background:conic-gradient(${c} ${s * 3.6}deg,var(--tile) 0)">
       <span>${Math.round(s)}</span></div>`;
   };
-  $('tab-radar').innerHTML = card('Live Radar', '자동 선정 후보 상위권',
-    `<div class="hint"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5M12 8h.01" stroke-linecap="round"/></svg>점수는 퀀트 5요소 합산 · 매수선 ${d.buy_above} / 매도선 ${d.sell_below} · ${d.source}</div>` +
-    d.rows.map(r => `<div class="row">${ring(r.score)}
+  $('tab-radar').innerHTML = card('AI Radar', `LLM 직접 선정 · ${esc(d.selected_by || '첫 스캔 대기')} · 기준 ${d.as_of || '—'}`,
+    `<div class="hint"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11V6.5a1.9 1.9 0 013.8 0V11" stroke-linecap="round"/><path d="M12.8 11V9.6a1.8 1.8 0 013.6 0V11" stroke-linecap="round"/><path d="M16.4 11v-.6a1.8 1.8 0 013.6 0V15a6 6 0 01-6 6h-1.6a5 5 0 01-3.7-1.7L4 13.6a1.9 1.9 0 012.7-2.6L9 13" stroke-linecap="round" stroke-linejoin="round"/></svg>길게 누르면 상세 재무정보 표시</div>
+     <div class="hint" style="margin-left:6px"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 16v-5M12 8h.01" stroke-linecap="round"/></svg>원 안 숫자는 LLM 확신도 · 퀀트는 참고 측정값 · ${esc(d.source)}</div>` +
+    (d.rows.length ? d.rows.map(r => `<div class="row" data-fin="${esc(r.symbol)}">${ring(r.conviction * 100)}
       <div class="grow">
         <div class="line1"><span class="nm">${esc(r.name)}</span><span class="cd">${esc(r.symbol)}</span></div>
         <div class="sub2">${esc(r.sector || r.market)}${r.sector ? ' · ' + esc(r.market) : ''}</div>
-        <div class="why">${r.unavailable ? esc(r.unavailable)
-          : `RSI ${r.rsi == null ? '—' : Math.round(r.rsi)} ${esc(r.rsi_zone || '')} · ADX ${esc(r.adx || '—')} · 매물대 ${esc(r.room || '—')}`}</div>
-        <div class="why" style="font-size:11.5px">${esc(clip((r.reasons || []).join(' · '), 130))}</div>
+        <div class="why">${esc(r.thesis)}</div>
+        <div class="why neg" style="font-size:11.5px">위험: ${esc(r.risk)}</div>
+        <div class="why" style="font-size:11.5px">참고 · 퀀트 ${r.score == null ? '—' : Math.round(r.score)} · RSI ${r.rsi == null ? '—' : Math.round(r.rsi)} · ADX ${esc(r.adx || '—')}</div>
       </div>
       <div style="text-align:right;flex:0 0 auto">
-        <div class="mono" style="font-weight:800;font-size:16px">${num(r.last)}원</div>
+        <div class="mono" style="font-weight:800;font-size:16px">${marketMoney(r.last, r.market)}</div>
         <div class="${cls(r.chg_1d_pct)}" style="font-size:14px;font-weight:700">${pct(r.chg_1d_pct)}</div>
-      </div></div>`).join(''));
+      </div></div>`).join('') : none('아직 LLM 스캔이 없다 — 자동매매를 켜면 첫 사이클에서 후보를 선정한다')));
+  document.querySelectorAll('#tab-radar [data-fin]').forEach(el => holdable(el, el.dataset.fin));
 }
 
 /* -------------------------------------------------------------- Portfolio */
-function renderPortfolio(p, t) {
+/* 증권사 계좌. 자체 장부와 다른 숫자라 카드를 따로 둔다 — 섞으면 어느 쪽인지 모른다. */
+function brokerAccount(a) {
+  if (!a || a.error) return none('계좌를 못 읽었다: ' + esc((a && a.error) || '응답 없음'));
+  const MK = {KR: '국내', US: '해외'};
+  return Object.entries(a.markets || {}).map(([mk, v]) => {
+    const head = `<div class="kv"><span><b>${MK[mk] || mk}</b> <span class="cd">${esc(v.venue || '')}</span></span>`;
+    if (v.unavailable) return head + `<span class="st">미연결</span></div>
+      <div class="why">${esc(v.unavailable)}</div>`;
+    // 증권사가 안 준 값은 '—' 로 둔다. 0 으로 적으면 화면이 모르는 것을 안다고 말하게 된다.
+    const cur = n => n == null ? '—' : v.currency === '$' ? '$' + Number(n).toFixed(2)
+                                        : Math.round(n).toLocaleString('ko-KR') + '원';
+    const rows = (v.positions || []).length ? v.positions.map(q => `
+      <div class="row">
+        <div class="grow">
+          <div class="line1"><span class="nm">${esc(q.name)}</span><span class="cd">${esc(q.symbol)}</span></div>
+          <div class="why mono">${num(q.qty)}주 · 평단 ${cur(q.avg)} → 현재 ${cur(q.last)}</div>
+        </div>
+        <div style="text-align:right;flex:0 0 auto">
+          <div class="mono" style="font-weight:800">${cur(q.value)}</div>
+          <div class="${cls(q.pnl_pct)}" style="font-weight:700;font-size:13px">${pct(q.pnl_pct)}${
+            q.pnl == null ? '' : ' · ' + cur(q.pnl)}</div>
+        </div></div>`).join('')
+      : `<div class="why">보유 종목 없음</div>`;
+    const totals = `
+      <div class="kv"><span>예수금 (주문가능)</span><b>${cur(v.cash)}</b></div>
+      <div class="kv"><span>매입금액</span><b>${cur(v.invested)}</b></div>
+      <div class="kv"><span>평가금액</span><b>${cur(v.eval_amount)}</b></div>
+      <div class="kv"><span>평가손익 (누적)</span>
+        <b class="${cls(v.pnl)}">${cur(v.pnl)} · ${pct(v.return_pct)}</b></div>`;
+    return head + `<b>${cur(v.equity)}</b></div>` + totals + rows;
+  }).join('');
+}
+
+/* 증권사 원장이 말하는 오늘 주문. 우리가 적은 기록(decisions)과 별개다 —
+   둘이 어긋나면 어긋난 채로 보여야 무엇이 잘못됐는지 알 수 있다. */
+function ordersCard(o) {
+  if (!o || o.error) return card('주문 현황', '증권사 원장 · 미체결 + 체결',
+    none('주문을 못 읽었다: ' + esc((o && o.error) || '응답 없음')));
+  if (o.unavailable) return card('주문 현황', '증권사 원장 · 미체결 + 체결', none(o.unavailable));
+  const hhmmss = t => { const s = String(t || '').replace(/\D/g, '');
+    return s.length >= 4 ? s.slice(0, 2) + ':' + s.slice(2, 4) : '—'; };
+  const rows = (o.rows || []).length ? o.rows.map(r => `
+    <div class="row"><span class="t">${esc(hhmmss(r.time))}</span>
+      <span class="badge b-${r.side === '매도' ? 'SELL' : 'BUY'}">${esc(r.side || '주문')}</span>
+      <div class="grow">
+        <div><span class="nm" style="font-size:16px">${esc(r.name || r.symbol || '')}</span>
+          <span class="st">${esc(r.state || '')}</span></div>
+        <div class="why mono">주문 ${num(r.order_qty)}주 @ ${won(r.order_price)}
+          · 체결 ${num(r.filled_qty)}주 @ ${won(r.filled_price)}
+          · 미체결 ${num(r.open_qty)}주</div>
+        <div class="why mono">주문번호 ${esc(r.order_no || '—')}</div>
+      </div></div>`).join('') : none('오늘 이 계좌로 나간 주문이 없다');
+  return card('주문 현황', `${esc(o.venue || '증권사')} 원장 · ${(o.rows || []).length}건`
+    + (o.generated_at ? ` · ${esc(o.generated_at)}` : ''), rows);
+}
+
+function renderPortfolio(p, t, acct, ord) {
   const s = p.snapshot, dv = p.diversification;
+  const COLORS = ['#0F9D76','#2F6FED','#E8892B','#E5484D','#8B5CF6','#14B8A6','#EC4899','#64748B'];
+  const totalHeld = s.positions.reduce((a, x) => a + Number(x.value || 0), 0);
+  let cursor = 0;
+  const stops = s.positions.map((x, i) => { const start = cursor;
+    cursor += totalHeld ? Number(x.value || 0) / totalHeld * 100 : 0;
+    return `${COLORS[i % COLORS.length]} ${start}% ${cursor}%`; });
+  const allocation = totalHeld ? `<div class="alloc"><div class="donut" style="background:conic-gradient(${stops.join(',')})">
+      <b>${s.positions.length}종목<br>${won(totalHeld)}</b></div><div class="legend">${s.positions.map((x, i) => `
+        <div class="lg"><i class="dot" style="background:${COLORS[i % COLORS.length]}"></i>
+          <span class="grow">${esc(x.name || x.symbol)}</span><b>${(Number(x.value || 0) / totalHeld * 100).toFixed(1)}%</b></div>`).join('')}</div></div>`
+    : none('보유 종목이 없다');
   const sleeves = Object.entries(s.sleeves).map(([k, v]) => `
     <div class="tile"><div class="k" style="white-space:nowrap">${k} · 목표 ${Math.round(v.target_weight * 100)}%</div>
       <div class="v">${won(v.equity)}</div>
@@ -378,7 +587,7 @@ function renderPortfolio(p, t) {
   const pos = s.positions.length ? s.positions.map(x => `
     <div class="row"><div class="grow">
       <div class="line1"><span class="nm">${esc(x.name || x.symbol)}</span><span class="cd">${esc(x.symbol)}</span><span class="st">${esc(x.sleeve)}</span></div>
-      <div class="why mono">${x.qty}주 · 평단 ${num(x.avg_price)} → ${num(x.last_price)}</div>
+      <div class="why mono">${x.qty}주 · 평단 ${marketMoney(x.avg_price, /^[0-9]{6}$/.test(x.symbol) ? 'KR' : 'US')} → ${marketMoney(x.last_price, /^[0-9]{6}$/.test(x.symbol) ? 'KR' : 'US')}</div>
     </div><div style="text-align:right">
       <div class="mono" style="font-weight:800;font-size:16px">${won(x.value)}</div>
       <div class="${x.unrealized_pct >= 0 ? 'pos' : 'neg'}" style="font-weight:700">${pct(x.unrealized_pct)}</div>
@@ -388,6 +597,10 @@ function renderPortfolio(p, t) {
     <div class="kv"><span>실질 분산 (덩어리/종목)</span><b>${dv.effective_groups}/${dv.symbols}</b></div>
     <div class="kv"><span>판정</span><b>${esc(dv.concentration || '—')}</b></div>
     ${(dv.highest_pairs || []).map(x => `<div class="kv"><span class="mono">${esc(x.pair)}</span><b>${x.corr}</b></div>`).join('')}`;
+
+  const markets = Object.entries(s.market_allocation || {}).map(([mk, v]) => `
+    <div class="tile"><div class="k">${mk === 'KR' ? '국내' : '해외'} 투입</div>
+      <div class="v">${won(v.value)}</div><div class="n">${pct(v.weight * 100)} / 상한 ${v.max_weight * 100}%</div></div>`).join('');
 
   const log = t.rows.length ? t.rows.map(r => `
     <div class="row"><span class="t">${hhmm(r.ts)}</span>
@@ -402,9 +615,13 @@ function renderPortfolio(p, t) {
       </div></div>`).join('') : none('거래 기록이 없다 — 자동매매를 켜거나 Run 을 눌러라');
 
   $('tab-portfolio').innerHTML =
-    card('Portfolio', `총 ${won(s.equity)} · 당일 ${pct(s.day_return_pct)}`,
-      `<div class="tiles" style="margin-top:0">${sleeves}</div>`) +
-    card('보유 종목', `${s.positions.length}종목`, pos) +
+    card(acct && acct.mode === 'mock' ? '모의투자 계좌' : '실계좌',
+      acct && acct.mode === 'mock' ? '키움증권 모의투자 · 주문 없는 조회' : '증권사가 말하는 실제 보유 · 조회 전용',
+      brokerAccount(acct)) +
+    ordersCard(ord) +
+    card('모의전략 통합원장', `자체 장부 · 국내 키움 모의 · 해외 로컬 모의 · 총 ${won(s.equity)} · 당일 ${pct(s.day_return_pct)}`,
+      `<div class="tiles" style="margin-top:0">${markets}</div><div class="tiles">${sleeves}</div>`) +
+    card('보유 종목 비중', `${s.positions.length}종목 · 원화 환산`, allocation + pos) +
     card('분산', '같이 움직이는가', divBody) +
     card('실시간 거래 기록', `최근 ${t.rows.length}건 · 체결 · 거부 · 손절`, log);
 }
@@ -420,6 +637,8 @@ function renderControl(d) {
     card('사람이 정한 경계', 'AI 가 바꿀 수 없는 값', `
       <div class="kv"><span>슬리브</span><b>안정 ${d.guardrails.sleeves.STABLE * 100}% : 공격 ${d.guardrails.sleeves.AGGRESSIVE * 100}%</b></div>
       <div class="kv"><span>종목당 상한</span><b>${d.guardrails.max_position_pct}%</b></div>
+      <div class="kv"><span>국내/해외 상한</span><b>${d.guardrails.market_weights.KR * 100}% / ${d.guardrails.market_weights.US * 100}%</b></div>
+      <div class="kv"><span>USD/KRW 환산</span><b>${Number(d.guardrails.usd_krw).toLocaleString('ko-KR')}</b></div>
       <div class="kv"><span>손절</span><b class="neg">${d.guardrails.stop_loss_pct}%</b></div>
       <div class="kv"><span>당일 정지</span><b class="neg">${d.guardrails.daily_loss_kill_pct}%</b></div>
       <div class="kv"><span>사이클당 최대 주문</span><b>${d.guardrails.max_orders_per_cycle}건</b></div>
@@ -429,10 +648,7 @@ function renderControl(d) {
       <div class="kv"><span>.env</span><b>${d.env_loaded ? '로드됨' : '없음'}</b></div>`) +
     card('유니버스', `${d.universe.length}종목 · 관찰 대상`,
       d.universe.map(u => `<div class="kv"><span><b>${esc(u.name)}</b> <span class="cd">${esc(u.symbol)}</span></span>
-        <span class="st">${esc(u.market)}</span></div>`).join('')) +
-    card('없는 화면', '데이터원이 없어 만들지 않은 것', none(
-      'DART 재무제표(상세실적) — 전자공시 API 연동이 이 레포에 없다. 숫자를 지어내지 않기 위해 ' +
-      '화면을 만들지 않았다. 섹터 분류도 같은 이유로 없다 (시장 KR/US 만 표시한다).'));
+        <span class="st">${esc(u.market)}</span></div>`).join(''));
 }
 
 /* ------------------------------------------------------------------- boot */
@@ -442,11 +658,13 @@ async function loadAll() {
   catch (e) { set('tab-command', none('불러오기 실패: ' + e.message)); }
   try { renderRadar(await api('/api/radar')); }
   catch (e) { set('tab-radar', none('불러오기 실패: ' + e.message)); }
-  try { renderPortfolio(await api('/api/portfolio'), await api('/api/trades')); }
+  try { renderPortfolio(await api('/api/portfolio'), await api('/api/trades'),
+                        await api('/api/account').catch(e => ({error: e.message})),
+                        await api('/api/orders').catch(e => ({error: e.message}))); }
   catch (e) { set('tab-portfolio', none('불러오기 실패: ' + e.message)); }
   try { renderControl(await api('/api/control')); }
   catch (e) { set('tab-control', none('불러오기 실패: ' + e.message)); }
-  $('sub').textContent = '다크랩 · ' + new Date().toLocaleTimeString('ko-KR');
+  $('sub').textContent = '부자가 되는 가장 빠른 지름길';
 }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));

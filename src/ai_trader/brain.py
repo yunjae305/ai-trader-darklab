@@ -8,8 +8,14 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
+import re
+import subprocess
+import tempfile
+from datetime import datetime
+from pathlib import Path
 
-from . import config as C
+from . import broker, config as C
 
 DECISION_SCHEMA = {
     "type": "object",
@@ -23,7 +29,7 @@ DECISION_SCHEMA = {
                     "symbol": {"type": "string"},
                     "action": {"type": "string", "enum": ["BUY", "SELL", "HOLD"]},
                     "sleeve": {"type": "string", "enum": ["STABLE", "AGGRESSIVE"]},
-                    "quantity": {"type": "integer"},
+                    "quantity": {"type": "number"},
                     "confidence": {"type": "number"},
                     "reason": {"type": "string"},
                 },
@@ -31,9 +37,24 @@ DECISION_SCHEMA = {
                 "additionalProperties": False,
             },
         },
+        "watchlist": {
+            "type": "array", "maxItems": 8,
+            "description": "이번 관측에서 직접 선정한 관심 후보. 주문 여부와 별개다.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "conviction": {"type": "number", "minimum": 0, "maximum": 1},
+                    "thesis": {"type": "string"},
+                    "risk": {"type": "string"},
+                },
+                "required": ["symbol", "conviction", "thesis", "risk"],
+                "additionalProperties": False,
+            },
+        },
         "lesson": {"type": "string", "description": "이번 사이클에서 배운 것 한 줄. 없으면 빈 문자열."},
     },
-    "required": ["market_view", "decisions", "lesson"],
+    "required": ["market_view", "decisions", "watchlist", "lesson"],
     "additionalProperties": False,
 }
 
@@ -50,6 +71,9 @@ SYSTEM = """너는 무인 트레이딩 다크랩의 유일한 트레이더다. �
 판 종목을 나중에 다시 사도 되고, 오늘 산 종목을 내일 팔아도 된다. 순서에 제약은 없다.
 관심 없는 종목은 굳이 HOLD 로 나열하지 않아도 된다.
 
+watchlist에는 관측 팩 중 다시 볼 가치가 있는 후보만 최대 8개 고르고, 확신도·선정 근거·
+무효화 위험을 적어라. Radar는 이 목록만 보여준다. 퀀트 점수 순위를 그대로 복사하지 마라.
+
 거래를 위한 거래는 하지 마라. 아무것도 할 이유가 없으면 decisions 를 비워도 된다.
 reason 에는 결론이 아니라 근거를 써라 — 어떤 관측치와 어떤 뉴스가 그 판단을 만들었는지.
 
@@ -64,6 +88,29 @@ class Decision(dict):
 
 def _policy() -> str:
     return C.POLICY.read_text(encoding="utf-8") if C.POLICY.exists() else "(policy 파일 없음)"
+
+
+def remember_lesson(lesson: str, brain_name: str) -> bool:
+    """실제 모의 사이클에서 LLM이 배운 점을 다음 판단의 정책 기억에 남긴다."""
+    lesson = " ".join(str(lesson or "").split()).strip()[:500]
+    if not lesson or not is_ai(brain_name) or not C.POLICY.exists():
+        return False
+    text = C.POLICY.read_text(encoding="utf-8")
+    heading, next_heading = "## 지금까지 배운 것", "## 폐기한 생각"
+    start, end = text.find(heading), text.find(next_heading)
+    if start < 0 or end <= start:
+        return False
+    block_start = start + len(heading)
+    current = text[block_start:end].strip()
+    if lesson in current:
+        return False
+    rows = [r for r in current.splitlines()
+            if r.strip() and "_(비어 있음" not in r]
+    rows.append(f"- [{datetime.now():%Y-%m-%d}] {lesson} ({brain_name})")
+    rows = rows[-30:]
+    updated = text[:block_start] + "\n\n" + "\n".join(rows) + "\n\n" + text[end:]
+    C.POLICY.write_text(updated, encoding="utf-8")
+    return True
 
 
 def _prompt(snapshot: dict, observations: list[dict], history: list[dict]) -> str:
@@ -115,7 +162,7 @@ def _offline(snapshot: dict, observations: list[dict]) -> dict:
         elif h % 5 == 0 and price > 0:
             sleeve = "STABLE" if h % 2 == 0 else "AGGRESSIVE"
             budget = snapshot["sleeves"][sleeve]["equity"] * C.MAX_POSITION_PCT * 0.8
-            qty = int(budget // price)
+            qty = broker.round_qty(sym, budget / broker.base_price(sym, price))
             if qty <= 0:
                 continue
             action = "BUY"
@@ -123,7 +170,7 @@ def _offline(snapshot: dict, observations: list[dict]) -> dict:
             continue
         decisions.append({"symbol": sym, "action": action, "sleeve": sleeve, "quantity": qty,
                           "confidence": 0.0, "reason": "offline stub — 판단 아님, 배선 점검용"})
-    return {"market_view": "offline stub", "decisions": decisions, "lesson": "",
+    return {"market_view": "offline stub", "decisions": decisions, "watchlist": [], "lesson": "",
             "brain": "offline-stub", "usage": {}}
 
 
@@ -175,7 +222,9 @@ def _quant_fallback(snapshot: dict, observations: list[dict]) -> dict:
         sleeve = "AGGRESSIVE" if vol >= C.QUANT_AGGRESSIVE_VOL else "STABLE"
         room = snapshot["sleeves"][sleeve]
         budget = min(room["cash"], room["equity"] * C.MAX_POSITION_PCT * 0.9)
-        qty = int(budget // price)
+        # 수수료만큼 못 사면 주문이 거절된다. 예산에서 먼저 빼고 나눈다.
+        qty = broker.round_qty(
+            sym, budget / (broker.base_price(sym, price) * (1 + broker.FEE_RATE)))
         if qty <= 0:
             continue
         decisions.append({
@@ -188,18 +237,172 @@ def _quant_fallback(snapshot: dict, observations: list[dict]) -> dict:
 
     top = ", ".join(f"{o['symbol']} {s:.0f}" for s, o in scored[:5])
     return {"market_view": f"퀀트 점수 상위: {top}" if top else "점수를 낼 수 있는 종목이 없다",
-            "decisions": decisions, "lesson": "",
+            "decisions": decisions, "watchlist": [], "lesson": "",
             "brain": "quant-fallback", "usage": {}}
 
 
+CLI_SCHEMA_HINT = """
+
+출력 형식: 아래 스키마의 JSON 객체 **하나만** 내라. 설명도 코드펜스도 붙이지 마라.
+{"market_view": "...", "lesson": "...", "watchlist": [
+  {"symbol": "005930", "conviction": 0.0, "thesis": "...", "risk": "..."}], "decisions": [
+  {"symbol": "005930", "action": "BUY|SELL|HOLD", "sleeve": "STABLE|AGGRESSIVE",
+   "quantity": 0.0, "confidence": 0.0, "reason": "..."}]}
+quantity 는 해외 종목이면 소수점을 써도 된다. 판단할 게 없으면 decisions 를 빈 배열로 둬라."""
+
+# CLI 가 파일을 읽거나 명령을 실행하면 안 된다. 판단만 받아온다.
+CLI_DENY = "Bash Read Edit Write Glob Grep WebSearch WebFetch Task NotebookEdit"
+
+
+def _first_json_object(text: str) -> dict:
+    """CLI 응답에서 JSON 객체 하나를 끄집어낸다. 코드펜스와 앞뒤 설명을 견딘다."""
+    s = str(text or "").strip()
+    fence = re.search(r"```(?:json)?\s*(.*?)```", s, re.S)
+    if fence:
+        s = fence.group(1).strip()
+    start = s.find("{")
+    if start < 0:
+        raise ValueError(f"JSON 이 없다: {s[:120]}")
+    depth, in_str, esc = 0, False, False
+    for i, ch in enumerate(s[start:], start):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return json.loads(s[start:i + 1])
+    raise ValueError("JSON 객체가 안 닫혔다")
+
+
+def cli_complete(system: str, prompt: str, model: str | None = None) -> tuple[str, dict]:
+    """이 PC 의 Claude Code CLI 에서 도구 없는 단일 응답을 받는다.
+
+    print 모드는 호출마다 Claude Code 시스템 프롬프트를 싣는다 — 측정값으로 호출당
+    약 2만 토큰이다. 그래서 백테스트처럼 호출이 많은 경로에는 쓰지 마라.
+    """
+    cmd = [C.BRAIN_CLI, "-p", "--output-format", "json", "--model", model or C.BRAIN_MODEL,
+           "--system-prompt", system, "--disallowedTools", CLI_DENY,
+           "--permission-mode", "dontAsk", "--permission-prompts", "none",
+           "--disable-slash-commands", "--no-session-persistence", "--max-turns", "1"]
+    proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
+                          timeout=C.BRAIN_CLI_TIMEOUT)
+    if proc.returncode != 0:
+        raise RuntimeError(f"claude cli exit {proc.returncode}: {proc.stderr[:200]}")
+    envelope = json.loads(proc.stdout)
+    if envelope.get("is_error"):
+        raise RuntimeError(f"claude cli error: {str(envelope.get('result'))[:200]}")
+    usage = envelope.get("usage") or {}
+    meta = {"input": usage.get("input_tokens"), "output": usage.get("output_tokens"),
+            "cost_usd": envelope.get("total_cost_usd")}
+    return str(envelope.get("result") or ""), meta
+
+
+def codex_complete(system: str, prompt: str, schema: dict | None = None) -> tuple[str, dict]:
+    """로그인된 Codex CLI 구독으로 도구 없는 단일 응답을 받는다."""
+    with tempfile.TemporaryDirectory(prefix="ai-trader-codex-") as tmp:
+        root = Path(tmp)
+        output = root / "last.txt"
+        cmd = [C.CODEX_CLI, "exec", "--sandbox", "read-only", "--skip-git-repo-check",
+               "--ephemeral", "--ignore-rules", "--json", "-C", tmp,
+               "--output-last-message", str(output)]
+        if C.CODEX_MODEL:
+            cmd += ["--model", C.CODEX_MODEL]
+        if schema is not None:
+            schema_path = root / "schema.json"
+            schema_path.write_text(json.dumps(schema, ensure_ascii=False), encoding="utf-8")
+            cmd += ["--output-schema", str(schema_path)]
+        cmd.append("-")
+        full_prompt = f"# 지시\n{system}\n\n# 입력\n{prompt}"
+        proc = subprocess.run(cmd, input=full_prompt, capture_output=True, text=True,
+                              timeout=C.BRAIN_CLI_TIMEOUT)
+        if proc.returncode != 0:
+            raise RuntimeError(f"codex cli exit {proc.returncode}: {(proc.stderr or proc.stdout)[:300]}")
+        if not output.exists():
+            raise RuntimeError("codex cli가 최종 응답 파일을 만들지 않았다")
+        usage = {}
+        for line in proc.stdout.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event.get("usage"), dict):
+                usage = event["usage"]
+        return output.read_text(encoding="utf-8"), {
+            "input": usage.get("input_tokens"), "output": usage.get("output_tokens")}
+
+
+_CLAUDE_QUOTA_EXHAUSTED = False
+
+
+def local_complete(system: str, prompt: str, schema: dict | None = None,
+                   claude_model: str | None = None) -> tuple[str, dict, str]:
+    """로컬 구독 CLI를 고른다. auto에서 Claude 실패 시 Codex로 이어간다."""
+    global _CLAUDE_QUOTA_EXHAUSTED
+    backend = C.brain_backend()
+    if backend == "codex":
+        text, usage = codex_complete(system, prompt, schema)
+        return text, usage, f"{C.CODEX_MODEL or 'codex'}(cli)"
+    if backend != "cli":
+        raise RuntimeError(f"로컬 CLI 백엔드가 아니다: {backend}")
+    if not _CLAUDE_QUOTA_EXHAUSTED:
+        try:
+            text, usage = cli_complete(system, prompt, model=claude_model)
+            return text, usage, f"{claude_model or C.BRAIN_MODEL}(cli)"
+        except Exception as exc:
+            msg = str(exc).lower()
+            if any(word in msg for word in ("limit", "quota", "credit", "billing", "rate")):
+                _CLAUDE_QUOTA_EXHAUSTED = True
+            if C.BRAIN_BACKEND.lower() != "auto" or not C.have_codex():
+                raise
+    text, usage = codex_complete(system, prompt, schema)
+    return text, usage, f"{C.CODEX_MODEL or 'codex'}(cli)"
+
+
+def _local_decide(system: str, prompt: str) -> dict:
+    """Claude/Codex CLI 응답을 매매 판단 객체로 바꾼다."""
+    result, usage, name = local_complete(system + CLI_SCHEMA_HINT, prompt,
+                                         schema=DECISION_SCHEMA)
+    out = _first_json_object(result)
+    if not isinstance(out.get("market_view"), str) or not isinstance(out.get("lesson"), str):
+        raise ValueError("CLI 판단에 market_view/lesson 문자열이 없다")
+    if not isinstance(out.get("decisions"), list) or not isinstance(out.get("watchlist"), list):
+        raise ValueError("CLI 판단의 decisions/watchlist 가 배열이 아니다")
+    out["brain"] = name
+    out["usage"] = usage
+    return out
+
+
 def decide(snapshot: dict, observations: list[dict], history: list[dict] | None = None,
-           policy_text: str | None = None) -> dict:
+           policy_text: str | None = None, allow_cli: bool = True) -> dict:
     """한 사이클의 판단을 돌려준다. 실패해도 예외를 던지지 않는다 — 랩은 멈추지 않는다."""
-    if not C.have_brain_key():
+    backend = C.brain_backend()
+    if backend in ("cli", "codex") and not allow_cli:
+        # 수십~수천 번 도는 과거 재생은 CLI 대신 같은 관측 팩의 퀀트 점수를 쓴다.
+        backend = "none"
+    if backend == "none":
         # 관측 팩에 퀀트 점수가 있으면 그걸로 판단한다. 없으면(백테스트 배선 점검 등) 스텁.
         if any((o.get("quant") or {}).get("score") is not None for o in observations):
             return _quant_fallback(snapshot, observations)
         return _offline(snapshot, observations)
+
+    if backend in ("cli", "codex"):
+        system = SYSTEM.format(policy=policy_text if policy_text is not None else _policy())
+        try:
+            return _local_decide(system, _prompt(snapshot, observations, history or []))
+        except Exception as exc:
+            # 판단을 못 받았으면 아무것도 하지 않는다. 추측 매매 금지.
+            return {"market_view": "", "decisions": [], "watchlist": [], "lesson": "",
+                    "brain": f"error:{type(exc).__name__}", "error": str(exc)[:300], "usage": {}}
     try:
         import anthropic
     except ImportError:
@@ -218,12 +421,12 @@ def decide(snapshot: dict, observations: list[dict], history: list[dict] | None 
         )
     except Exception as exc:
         # 네트워크·레이트리밋으로 판단을 못 했으면 아무것도 하지 않는다. 추측 매매 금지.
-        return {"market_view": "", "decisions": [], "lesson": "",
+        return {"market_view": "", "decisions": [], "watchlist": [], "lesson": "",
                 "brain": f"error:{type(exc).__name__}", "error": str(exc)[:300], "usage": {}}
 
     if resp.stop_reason == "refusal":
         # 거부당한 판단을 다른 모델로 우회해 돈을 굴리지 않는다. 그냥 아무것도 안 한다.
-        return {"market_view": "", "decisions": [], "lesson": "",
+        return {"market_view": "", "decisions": [], "watchlist": [], "lesson": "",
                 "brain": "refusal", "usage": {}}
 
     text = next((b.text for b in resp.content if b.type == "text"), "{}")
@@ -251,7 +454,13 @@ def validate(decisions: list[dict], snapshot: dict, prices: dict[str, float],
             continue
         if prices.get(sym, 0) <= 0:
             continue
-        qty = int(d.get("quantity") or 0)
+        # 해외는 소수점 주식이 있다. 시장이 못 받는 자리는 broker 가 잘라낸다.
+        try:
+            qty = broker.round_qty(sym, d.get("quantity") or 0)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not math.isfinite(qty):
+            continue
         if qty <= 0:
             continue
         sleeve = held[sym]["sleeve"] if sym in held else str(d.get("sleeve", "")).upper()

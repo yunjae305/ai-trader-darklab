@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,9 +36,13 @@ RESEARCH = ROOT / "research"
 LAB = ROOT / "lab"
 POLICY = LAB / "policy.md"
 STATE = LAB / "paper_state.json"
+MOCK_STATE = LAB / "mock_state.json"
 
 # --- 자본 배분: 안정 6 : 공격 4 (사람이 정한 유일한 배분 제약) ---
 SLEEVES: dict[str, float] = {"STABLE": 0.60, "AGGRESSIVE": 0.40}
+# 총 모의자본에서 시장별로 실제 투입할 수 있는 상한. 현금은 공통 원화 장부에 남는다.
+MARKET_WEIGHTS: dict[str, float] = {"KR": 0.50, "US": 0.50}
+USD_KRW = float(os.getenv("AI_TRADER_USD_KRW", "1400"))
 
 START_CASH = float(os.getenv("AI_TRADER_START_CASH", "10_000_000".replace("_", "")))
 
@@ -79,10 +84,21 @@ _KW_SUFFIX = "" if KIWOOM_MODE == "real" else "_MOCK"
 KIWOOM_KEY = os.getenv(f"APP_KEY{_KW_SUFFIX}", "")
 KIWOOM_SECRET = os.getenv(f"APP_SECRET{_KW_SUFFIX}", "")
 
+# --- DART 전자공시 (재무제표 상세실적) ---
+DART_API_KEY = os.getenv("DART_API_KEY", "")
+
 # --- 판단 엔진 ---
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 BRAIN_MODEL = os.getenv("AI_TRADER_MODEL", "claude-opus-5")
 RESEARCH_MODEL = os.getenv("AI_TRADER_RESEARCH_MODEL", "claude-opus-5")
+
+# --- 판단 백엔드: auto(기본) | api | cli | codex | off ---
+# auto는 API → Claude CLI → Codex CLI 순서다. 로컬 CLI는 로그인된 구독 한도를 쓴다.
+BRAIN_BACKEND = os.getenv("AI_TRADER_BRAIN", "auto")
+BRAIN_CLI = os.getenv("AI_TRADER_CLAUDE_CLI", "claude")
+CODEX_CLI = os.getenv("AI_TRADER_CODEX_CLI", "codex")
+CODEX_MODEL = os.getenv("AI_TRADER_CODEX_MODEL", "")  # 비우면 ~/.codex/config.toml 설정 사용
+BRAIN_CLI_TIMEOUT = int(os.getenv("AI_TRADER_BRAIN_TIMEOUT", "240"))
 
 CYCLE_SECONDS = int(os.getenv("AI_TRADER_CYCLE_SECONDS", "900"))  # 15분
 # mlflow 3.x 는 파일 스토어를 폐기했다 — 로컬 sqlite 가 기본.
@@ -91,7 +107,8 @@ MLFLOW_EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT", "ai-trader-darklab")
 
 
 def have_broker_keys() -> bool:
-    return bool(TOSS_CLIENT_ID and TOSS_CLIENT_SECRET and TOSS_ACCOUNT)
+    # accountSeq 는 키가 아니다. 비어 있으면 TossVenue.account_seq() 가 계좌 목록에서 찾는다.
+    return bool(TOSS_CLIENT_ID and TOSS_CLIENT_SECRET)
 
 
 MARKETS = ("KR", "US")
@@ -116,4 +133,35 @@ def have_kiwoom_keys() -> bool:
 
 
 def have_brain_key() -> bool:
+    """API 키로 판단할 수 있나. CLI 경로는 have_brain() 을 봐라."""
     return bool(ANTHROPIC_API_KEY)
+
+
+def brain_backend() -> str:
+    """우선 시도할 판단 경로: 'api' | 'cli' | 'codex' | 'none'.
+
+    auto는 API 키, Claude CLI, Codex CLI 순서다. Claude CLI가 한도 초과로 실패하면
+    실행 시점에 Codex CLI로 한 번 더 시도한다.
+    """
+    want = BRAIN_BACKEND.lower()
+    if want == "off":
+        return "none"
+    if want in ("api", "cli", "codex"):
+        if want == "api":
+            return "api" if ANTHROPIC_API_KEY else "none"
+        if want == "cli":
+            return "cli" if shutil.which(BRAIN_CLI) else "none"
+        return "codex" if shutil.which(CODEX_CLI) else "none"
+    if ANTHROPIC_API_KEY:
+        return "api"
+    if shutil.which(BRAIN_CLI):
+        return "cli"
+    return "codex" if shutil.which(CODEX_CLI) else "none"
+
+
+def have_codex() -> bool:
+    return bool(shutil.which(CODEX_CLI))
+
+
+def have_brain() -> bool:
+    return brain_backend() != "none"

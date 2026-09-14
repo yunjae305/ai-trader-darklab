@@ -21,15 +21,17 @@ import socket
 import threading
 import time
 import traceback
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import (benchmark, brain, broker as bk, config as C, correlation,
-               data, engine, journal, news)
+               dart, data, engine, journal, news)
 
 WEB = Path(__file__).resolve().parent / "web"
 TOKEN = os.getenv("AI_TRADER_DASH_TOKEN") or secrets.token_urlsafe(9)
+DAY_ANCHOR = C.LAB / "kiwoom_day.json"   # 당일 수익률의 기준점. 증권사는 이걸 주지 않는다.
 
 _cache: dict[str, tuple[float, object]] = {}
 _lock = threading.Lock()
@@ -50,11 +52,66 @@ def cached(key: str, ttl: float, build):
 # ---------------------------------------------------------------- 데이터 조립
 
 def _feed():
-    return cached("feed", 3600, lambda: data.make_feed(paper=True, live_data=True))
+    live = cached("live-feed", 3600, lambda: data.make_feed(paper=True, live_data=True))
+    from .history import StoredDailyFeed
+    closed = cached("closed-feed", 3600, lambda: StoredDailyFeed.build(C.UNIVERSE))
+    return cached("session-feed", 3600, lambda: data.SessionFeed(live, closed))
+
+
+def day_anchor(equity: float) -> float | None:
+    """오늘 처음 본 계좌 평가액. 증권사는 '당일 수익률'을 주지 않는다 — 직접 기준점을 잡는다.
+
+    키움이 주는 tot_prft_rt 는 매입가 대비 **누적** 수익률이다. 그것을 당일 손익이라고
+    적으면 거짓말이 되므로, 당일은 우리가 관측한 첫 평가액으로만 계산한다.
+    """
+    if equity <= 0:
+        return None
+    today = datetime.now(data.KST).strftime("%Y-%m-%d")
+    try:
+        saved = json.loads(DAY_ANCHOR.read_text(encoding="utf-8"))
+    except Exception:
+        saved = {}
+    if saved.get("date") == today and float(saved.get("equity") or 0) > 0:
+        return float(saved["equity"])
+    DAY_ANCHOR.parent.mkdir(parents=True, exist_ok=True)
+    DAY_ANCHOR.write_text(json.dumps({"date": today, "equity": equity}, ensure_ascii=False),
+                          encoding="utf-8")
+    return equity
 
 
 def lab_state() -> dict:
-    """계좌 현황. 자체 장부(lab/paper_state.json)가 원본이다."""
+    """상단 계좌 현황. demo에서는 키움 모의계좌가 원본이다.
+
+    계좌가 말해준 값만 적는다. 현재가·평가금액·평가손익은 증권사가 주는 것이고,
+    슬리브(안정/공격)는 실계좌에 없는 개념이라 지어내지 않고 비워 둔다.
+    """
+    if C.KIWOOM_MODE == "demo" and C.have_kiwoom_keys():
+        account = cached("account", 30, account_state)
+        row = account.get("markets", {}).get("KR", {})
+        if not row.get("unavailable"):
+            cash, equity = float(row.get("cash") or 0), float(row.get("equity") or 0)
+            start = day_anchor(equity)
+            day_pct = round((equity - start) / start * 100, 2) if start else None
+            return {
+                "mode": "kiwoom-demo", "source": "kiwoom-mock",
+                "market_open": data.KiwoomFeed().is_open(),
+                "market_label": "키움 모의투자 · " + ("장 운영중" if data.session_now() else "장 마감"),
+                "equity": round(equity), "cash": round(cash),
+                "day_start_equity": round(start) if start else None,
+                "day_return_pct": day_pct,
+                "total_return_pct": row.get("return_pct"), "pnl_amount": row.get("pnl"),
+                "invested": row.get("invested"), "eval_amount": row.get("eval_amount"),
+                "halted": False,
+                # 슬리브는 증권사 계좌에 없다. 비율로 쪼개 만들어 내면 화면이 거짓말을 한다.
+                "sleeves": {},
+                "sleeves_unavailable": "슬리브(안정6:공격4)는 자체 장부의 개념이다 — 증권사 계좌에는 없다",
+                "positions": [{"symbol": p["symbol"], "name": p.get("name") or p["symbol"],
+                               "qty": p["qty"], "avg_price": p["avg"],
+                               "last_price": p.get("last"), "unrealized_pct": p.get("pnl_pct"),
+                               "unrealized_pnl": p.get("pnl"),
+                               "value": p.get("value"), "sleeve": "계좌"}
+                              for p in row.get("positions", [])],
+            }
     broker = bk.PaperBroker.load()
     feed = _feed()
     try:
@@ -81,6 +138,8 @@ def _named(snap: dict) -> dict:
 def guardrails() -> dict:
     return {
         "sleeves": C.SLEEVES,
+        "market_weights": C.MARKET_WEIGHTS,
+        "usd_krw": C.USD_KRW,
         # 0.07*100 은 7.000000000000001 이 된다. 화면에 그대로 내보내지 않는다.
         "max_position_pct": round(C.MAX_POSITION_PCT * 100, 2),
         "stop_loss_pct": round(C.STOP_LOSS_PCT, 2),
@@ -172,18 +231,36 @@ def ai_analysis(limit: int = 12) -> list[dict]:
 
 
 def radar() -> dict:
-    """퀀트 점수 랭킹. 관측 팩을 그대로 쓴다 — 별도 채점 기준을 또 만들지 않는다."""
+    """최근 LLM 사이클이 직접 고른 후보. 퀀트는 후보 설명의 참고 측정값이다."""
+    watch, selected_at, selected_by = [], "", ""
+    for cycle in reversed(journal.read("cycles", limit=100)):
+        if brain.is_ai(cycle.get("brain")) and isinstance(cycle.get("watchlist"), list):
+            if cycle["watchlist"]:
+                watch, selected_at, selected_by = cycle["watchlist"][:8], cycle.get("ts", ""), cycle.get("brain", "")
+                break
+    symbols = [str(w.get("symbol") or "") for w in watch]
+    symbols = [s for s in symbols if s in C.UNIVERSE]
+    if not symbols:
+        return {"rows": [], "source": "LLM", "as_of": "",
+                "selected_at": selected_at, "selected_by": selected_by}
     feed = _feed()
-    pack = data.observe(feed, C.UNIVERSE, with_news=False)
+    pack = data.observe(feed, symbols, with_news=False)
+    measured = {o["symbol"]: o for o in pack}
     rows = []
-    for o in pack:
+    for w in watch:
+        o = measured.get(str(w.get("symbol") or ""))
+        if not o:
+            continue
         q = o.get("quant") or {}
         ind = o.get("indicators") or {}
         obs = o.get("observed") or {}
         rows.append({
             "symbol": o["symbol"], "name": o.get("name"), "market": o.get("market"),
+            "as_of": o.get("as_of"),
             "sector": o.get("sector") or "",
             "score": q.get("score"),
+            "conviction": max(0, min(1, float(w.get("conviction") or 0))),
+            "thesis": str(w.get("thesis") or ""), "risk": str(w.get("risk") or ""),
             "unavailable": q.get("unavailable") or ind.get("unavailable"),
             "reasons": q.get("reasons", []),
             "parts": q.get("parts", {}),
@@ -196,13 +273,15 @@ def radar() -> dict:
             "adx": (ind.get("adx") or {}).get("strength"),
             "room": (ind.get("profile_gap") or {}).get("room"),
         })
-    rows.sort(key=lambda r: -(r["score"] if r["score"] is not None else -1))
-    return {"rows": rows, "source": feed.source,
-            "buy_above": C.QUANT_BUY_ABOVE, "sell_below": C.QUANT_SELL_BELOW}
+    rows.sort(key=lambda r: -r["conviction"])
+    as_of = max((str(r.get("as_of") or "") for r in rows), default="")
+    return {"rows": rows, "source": feed.source, "as_of": as_of,
+            "selected_at": selected_at, "selected_by": selected_by}
 
 
 def portfolio() -> dict:
-    broker = bk.PaperBroker.load()
+    state = C.MOCK_STATE if C.KIWOOM_MODE == "demo" else C.STATE
+    broker = bk.PaperBroker.load(state)
     feed = _feed()
     prices = feed.prices(C.UNIVERSE)
     snap = broker.snapshot(prices)
@@ -227,20 +306,107 @@ def market_insight(limit: int = 20) -> list[dict]:
 def command_state() -> dict:
     cycles = journal.read("cycles", limit=1)
     incidents = journal.read("incidents", limit=8)
+    feed = _feed()
+    quotes = cached("indices", 300, benchmark.quotes)
     return {
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "lab": lab_state(),
         "last_cycle": cycles[-1] if cycles else None,
-        "brain": C.BRAIN_MODEL if C.have_brain_key() else "quant-fallback",
-        "has_llm_key": C.have_brain_key(),
+        "brain": ({"api": C.BRAIN_MODEL, "cli": f"{C.BRAIN_MODEL}(cli→codex)",
+                   "codex": f"{C.CODEX_MODEL or 'codex'}(cli)"}
+                  .get(C.brain_backend(), "quant-fallback")),
+        "has_llm_key": C.have_brain(),
+        "brain_backend": C.brain_backend(),
         "guardrails": guardrails(),
         "strategy_stats": strategy_stats(),
         "engine": engine.status(),
-        "indices": cached("indices", 300, benchmark.quotes),
+        "market_sessions": {
+            "KR": {"open": data.feed_open_for(feed, "005930"),
+                   "local_time": datetime.now(data.KST).strftime("%H:%M"), "zone": "KST"},
+            "US": {"open": data.feed_open_for(feed, "AAPL"),
+                   "local_time": datetime.now(data.ET).strftime("%H:%M"), "zone": "ET"},
+        },
+        "indices": [q for q in quotes if q.get("symbol") in {"^KS11", "^KQ11", "^GSPC"}],
+        "fx": [q for q in quotes if q.get("symbol") in {"KRW=X", "JPYKRW=X"}],
         "ai_analysis": ai_analysis(),
         "incidents": incidents[::-1],
         "news": cached("news", 600, market_insight),
     }
+
+
+CURRENCY = {"KR": "원", "US": "$"}
+
+
+def account_state() -> dict:
+    """대시보드에 표시할 증권사 계좌 — 조회만 한다. 주문은 이 경로로 나가지 않는다.
+
+    KIWOOM_MODE=demo 동안에는 키움 모의계좌만 표시한다. 사용자가 실계좌 화면을 명시적으로
+    요청하기 전에는 토스 실계좌를 대시보드에 섞지 않는다.
+    """
+    mock = C.KIWOOM_MODE == "demo"
+    venues = {"KR": bk.KiwoomVenue} if mock else bk.VENUES
+    out = {"markets": {}, "mode": "mock" if mock else "live",
+           "generated_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    for market, cls in venues.items():
+        why = cls.unavailable()
+        if why:
+            out["markets"][market] = {"unavailable": why, "venue": cls.name}
+            continue
+        try:
+            venue = cls()
+            if mock and hasattr(venue, "summary"):
+                summary = venue.summary()
+                rows, cash = summary["positions"], summary["cash"]
+            else:
+                summary = {}
+                rows, cash = venue.positions(), venue.cash()
+        except Exception as exc:
+            out["markets"][market] = {"venue": cls.name,
+                                      "unavailable": f"{type(exc).__name__}: {str(exc)[:160]}"}
+            continue
+        out["markets"][market] = {
+            "venue": venue.name, "currency": CURRENCY.get(market, ""), "cash": cash,
+            "equity": summary.get("equity"), "pnl": summary.get("pnl"),
+            "return_pct": summary.get("return_pct"),
+            "invested": summary.get("invested"), "eval_amount": summary.get("eval_amount"),
+            # value 는 평가금액이다. 증권사가 안 주면 매입금액으로 덮지 않고 비워 둔다 —
+            # 매입금액을 평가금액 자리에 적으면 손익이 항상 0 으로 보인다.
+            "positions": [{**r, "name": r.get("name") or data.NAMES.get(r["symbol"], r["symbol"])}
+                          for r in rows],
+        }
+    return out
+
+
+def orders_state() -> dict:
+    """오늘 낸 주문 — 미체결과 체결. "주문이 진짜 나갔나"를 확인하는 화면이 쓴다.
+
+    장부(decisions 기록)는 우리가 적은 것이고, 이건 증권사 원장이 말하는 것이다.
+    둘이 어긋나면 어긋난 대로 보여야 한다 — 그래서 한쪽으로 합치지 않는다.
+    """
+    if not (C.KIWOOM_MODE == "demo" and C.have_kiwoom_keys()):
+        return {"rows": [], "unavailable": f"키움 모의투자 계좌가 아니다 (KIWOOM_MODE={C.KIWOOM_MODE})"}
+    why = bk.KiwoomVenue.unavailable()
+    if why:
+        return {"rows": [], "unavailable": why}
+    try:
+        venue = bk.KiwoomVenue()
+        return {"rows": venue.orders(), "venue": venue.name,
+                "generated_at": time.strftime("%H:%M:%S")}
+    except Exception as exc:
+        return {"rows": [], "unavailable": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
+
+def financials(symbol: str) -> dict:
+    """DART 재무제표. 공시는 분기에 한 번 바뀌므로 종목당 하루를 캐시한다."""
+    symbol = (symbol or "").strip()
+    if not symbol:
+        return {"unavailable": "종목을 지정하지 않았다"}
+    try:
+        return cached(f"dart:{symbol}", 86400, lambda: dart.statements(symbol))
+    except dart.Unavailable as exc:
+        # 못 읽은 이유를 그대로 화면에 보낸다 — 빈 표는 0원이라는 거짓말이 된다.
+        return {"symbol": symbol, "name": data.NAMES.get(symbol, symbol),
+                "unavailable": str(exc)}
 
 
 def control_state() -> dict:
@@ -260,13 +426,19 @@ ACTIONS = {
     "/api/engine/once": engine.run_once,
 }
 
+# 조회 경로는 쿼리스트링(parse_qs 결과)을 받는다. 대부분은 쓰지 않는다.
 ROUTES = {
-    "/api/command": lambda: command_state(),
-    "/api/engine": lambda: engine.status(),
-    "/api/radar": lambda: cached("radar", 120, radar),
-    "/api/trades": lambda: {"rows": trades()},
-    "/api/portfolio": lambda: portfolio(),
-    "/api/control": lambda: control_state(),
+    "/api/command": lambda q: command_state(),
+    "/api/engine": lambda q: engine.status(),
+    "/api/radar": lambda q: cached("radar", 120, radar),
+    "/api/trades": lambda q: {"rows": trades()},
+    "/api/portfolio": lambda q: portfolio(),
+    "/api/control": lambda q: control_state(),
+    "/api/financials": lambda q: financials((q.get("symbol") or [""])[0]),
+    # 증권사를 매번 부르므로 30초만 캐시한다. 새로고침을 눌러도 폭주하지 않는다.
+    "/api/account": lambda q: cached("account", 30, account_state),
+    # 주문은 초 단위로 바뀐다 — 잔고보다 짧게 잡는다.
+    "/api/orders": lambda q: cached("orders", 15, orders_state),
 }
 
 
@@ -321,7 +493,7 @@ class Handler(BaseHTTPRequestHandler):
         if not secrets.compare_digest(token, TOKEN):
             return self._json(401, {"error": "토큰이 맞지 않는다"})
         try:
-            return self._json(200, ROUTES[url.path]())
+            return self._json(200, ROUTES[url.path](query))
         except Exception as exc:
             journal.jot("incidents", {"kind": "dashboard_error", "path": url.path,
                                       "trace": traceback.format_exc()[-800:]})

@@ -16,6 +16,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import date
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 
 import requests
 
@@ -23,6 +24,43 @@ from . import config as C
 
 FEE_RATE = 0.00015  # 위탁수수료 근사
 TAX_RATE = 0.0018   # 매도 시 거래세 근사
+
+# 국내(KRX)에는 소수점 주식이 없다. 토스 해외주식은 소수점 6자리까지 쓴다.
+# 한 장부가 두 시장을 담으므로 정밀도도 종목마다 갈린다.
+US_QTY_DECIMALS = 6
+QTY_EPSILON = 10 ** -(US_QTY_DECIMALS + 3)  # float 비교용. 이보다 작으면 0 으로 본다
+
+
+def base_price(symbol: str, price: float) -> float:
+    """원화 기준 장부 가격. 해외 가격은 설정된 USD/KRW로 환산한다."""
+    return float(price) if C.market_of(symbol) == "KR" else float(price) * C.USD_KRW
+
+
+def round_qty(symbol: str, qty: float) -> float:
+    """시장이 허용하는 최소 단위로 **내림**한다. 올림하면 없는 돈을 쓴다."""
+    try:
+        value = Decimal(str(qty))
+    except (InvalidOperation, TypeError, ValueError):
+        return 0.0
+    if not value.is_finite() or value <= 0:
+        return 0.0
+    if C.market_of(symbol) == "KR":
+        return float(value.to_integral_value(rounding=ROUND_DOWN))
+    quantum = Decimal(1).scaleb(-US_QTY_DECIMALS)
+    return float(value.quantize(quantum, rounding=ROUND_DOWN))
+
+
+def _usd_amount(qty: float, price: float) -> str:
+    """소수점 매수 금액을 센트 단위로 내린다. 반올림으로 예산을 넘기지 않는다."""
+    amount = Decimal(str(qty)) * Decimal(str(price))
+    return format(amount.quantize(Decimal("0.01"), rounding=ROUND_DOWN), "f")
+
+
+def _us_limit_price(price: float) -> str:
+    """토스 미국주식 지정가: $1 이상 2자리, 미만 4자리에서 내림."""
+    value = Decimal(str(price))
+    quantum = Decimal("0.01") if value >= 1 else Decimal("0.0001")
+    return format(value.quantize(quantum, rounding=ROUND_DOWN), "f")
 
 
 class Rejected(Exception):
@@ -33,11 +71,11 @@ class Rejected(Exception):
 class Position:
     symbol: str
     sleeve: str
-    qty: int
+    qty: float  # 해외는 소수점 주식이 있다 (NVDA 0.113154주)
     avg: float
 
     def value(self, price: float) -> float:
-        return self.qty * price
+        return self.qty * base_price(self.symbol, price)
 
     def pnl_pct(self, price: float) -> float:
         return 0.0 if self.avg <= 0 else (price - self.avg) / self.avg * 100
@@ -106,12 +144,22 @@ class PaperBroker:
         return self.cash.get(sleeve, 0.0) + held
 
     def snapshot(self, prices: dict[str, float]) -> dict:
+        market_values = {m: round(sum(p.value(prices.get(s, p.avg))
+                                            for s, p in self.positions.items()
+                                            if C.market_of(s) == m))
+                         for m in C.MARKETS}
+        total = self.equity(prices)
         return {
             "mode": self.mode,
             "halted": self.halted,
             "equity": round(self.equity(prices)),
             "day_start_equity": round(self.day_start_equity),
             "day_return_pct": round(self.day_return_pct(prices), 3),
+            "base_currency": "KRW", "usd_krw": C.USD_KRW,
+            "market_allocation": {
+                m: {"max_weight": C.MARKET_WEIGHTS[m], "value": market_values[m],
+                    "weight": round(market_values[m] / total, 4) if total else 0}
+                for m in C.MARKETS},
             "sleeves": {
                 k: {
                     "target_weight": C.SLEEVES[k],
@@ -147,26 +195,38 @@ class PaperBroker:
         return True
 
     # ---------- 집행 ----------
-    def buy(self, symbol: str, sleeve: str, qty: int, price: float) -> dict:
+    def buy(self, symbol: str, sleeve: str, qty: float, price: float) -> dict:
         if self.halted:
             raise Rejected("lab halted by daily loss kill-switch")
         if sleeve not in C.SLEEVES:
             raise Rejected(f"unknown sleeve {sleeve}")
+        qty = round_qty(symbol, qty)  # 시장이 못 받는 단위는 여기서 잘라낸다
         if qty <= 0 or price <= 0:
             raise Rejected("qty/price must be positive")
-        cost = qty * price * (1 + FEE_RATE)
+        cost = qty * base_price(symbol, price) * (1 + FEE_RATE)
         if cost > self.cash.get(sleeve, 0.0):
             raise Rejected(f"insufficient {sleeve} cash: need {cost:.0f}, have {self.cash.get(sleeve, 0):.0f}")
 
         existing = self.positions.get(symbol)
         if existing and existing.sleeve != sleeve:
             raise Rejected(f"{symbol} already held in {existing.sleeve} sleeve")
-        sleeve_eq = self.sleeve_equity(sleeve, {symbol: price})
-        held_after = (existing.value(price) if existing else 0.0) + qty * price
+        current_prices = {s: p.avg for s, p in self.positions.items()}
+        current_prices[symbol] = price
+        sleeve_eq = self.sleeve_equity(sleeve, current_prices)
+        held_after = ((existing.value(price) if existing else 0.0)
+                      + qty * base_price(symbol, price))
         if sleeve_eq > 0 and held_after / sleeve_eq > C.MAX_POSITION_PCT:
             raise Rejected(
                 f"position cap: {symbol} would be {held_after / sleeve_eq:.1%} of {sleeve} "
                 f"(max {C.MAX_POSITION_PCT:.0%})")
+        market = C.market_of(symbol)
+        total_eq = self.equity(current_prices)
+        market_now = sum(p.value(current_prices.get(s, p.avg))
+                         for s, p in self.positions.items() if C.market_of(s) == market)
+        market_after = market_now + qty * base_price(symbol, price)
+        if total_eq > 0 and market_after / total_eq > C.MARKET_WEIGHTS[market]:
+            raise Rejected(f"market cap: {market} would be {market_after / total_eq:.1%} "
+                           f"(max {C.MARKET_WEIGHTS[market]:.0%})")
 
         self.cash[sleeve] -= cost
         if existing:
@@ -180,21 +240,23 @@ class PaperBroker:
         self.fills.append(fill)
         return fill
 
-    def sell(self, symbol: str, qty: int, price: float) -> dict:
+    def sell(self, symbol: str, qty: float, price: float) -> dict:
         pos = self.positions.get(symbol)
         if pos is None:
             raise Rejected(f"no position in {symbol}")
-        qty = min(qty, pos.qty)
+        # 보유량은 이미 시장 단위에 맞다. 요청만 자르고, 남은 전량 매도는 그대로 통과시킨다.
+        qty = min(round_qty(symbol, qty), pos.qty)
         if qty <= 0 or price <= 0:
             raise Rejected("qty/price must be positive")
-        gross = qty * price
+        gross = qty * base_price(symbol, price)
         proceeds = gross * (1 - FEE_RATE - TAX_RATE)
-        realized = proceeds - pos.avg * qty
+        realized = proceeds - base_price(symbol, pos.avg) * qty
         self.cash[pos.sleeve] += proceeds
         self.realized[pos.sleeve] = self.realized.get(pos.sleeve, 0.0) + realized
         pos.qty -= qty
         sleeve = pos.sleeve
-        if pos.qty == 0:
+        # float 뺄셈은 0 대신 1e-17 을 남긴다. 그걸 보유로 들고 있으면 재매수가 막힌다.
+        if pos.qty < QTY_EPSILON:
             del self.positions[symbol]  # 전량 매도 → 언제든 재매수 가능
         fill = {"side": "SELL", "symbol": symbol, "sleeve": sleeve, "qty": qty,
                 "price": price, "proceeds": round(proceeds),
@@ -266,7 +328,7 @@ class Venue:
     market = ""
     name = ""
 
-    def send(self, symbol: str, side: str, qty: int, price: float) -> dict:
+    def send(self, symbol: str, side: str, qty: float, price: float) -> dict:
         raise NotImplementedError
 
     def positions(self) -> list[dict]:
@@ -362,7 +424,7 @@ class TossVenue(Venue):
             qty = _num(row.get("quantity", row.get("qty")))
             if not sym or qty <= 0:
                 continue
-            out.append({"symbol": sym, "qty": int(qty),
+            out.append({"symbol": sym, "qty": round_qty(sym, qty),
                         "avg": _num(row.get("averagePurchasePrice",
                                             row.get("avgPrice", row.get("purchasePrice"))))})
         return out
@@ -376,17 +438,59 @@ class TossVenue(Venue):
         node = body.get("result", body)
         return _num(node.get("cashBuyingPower", node.get("cash", node.get("amount"))))
 
-    def send(self, symbol: str, side: str, qty: int, price: float) -> dict:
+    @staticmethod
+    def order_body(symbol: str, side: str, qty: float, price: float) -> dict:
+        """토스가 받는 주문 본문. 소수점 규칙이 매수·매도에서 서로 다르다.
+
+        - 정수 수량      → 지정가(LIMIT) + quantity. 가격을 통제할 수 있으니 이쪽이 낫다.
+        - 소수점 매도    → 시장가(MARKET) + quantity (6자리까지)
+        - 소수점 매수    → 시장가(MARKET) + orderAmount (달러 금액). quantity 로 보내면
+                          400 invalid-request 다. 정규장 밖이면 422 가 온다.
+        """
+        body = {"symbol": symbol, "side": side, "clientOrderId": uuid.uuid4().hex[:32]}
+        if float(qty).is_integer():
+            return {**body, "orderType": "LIMIT", "price": _us_limit_price(price),
+                    "quantity": str(int(qty))}
+        if side == "SELL":
+            return {**body, "orderType": "MARKET", "quantity": f"{qty:.6f}"}
+        # ponytail: 체결 수량은 시장가라 요청과 다르다. 다음 sync() 가 장부를 맞춘다.
+        return {**body, "orderType": "MARKET", "orderAmount": _usd_amount(qty, price)}
+
+    def send(self, symbol: str, side: str, qty: float, price: float) -> dict:
         if not C.LIVE_TRADING:
             return {"skipped": "AI_TRADER_LIVE != 1", "venue": self.name,
                     "symbol": symbol, "side": side, "qty": qty}
         r = self.session.post(
             f"{C.TOSS_BASE}/api/v1/orders",
             headers={**self._headers(account=True), "Content-Type": "application/json"},
-            json={"symbol": symbol, "side": side, "quantity": qty,
-                  "orderType": "LIMIT", "price": price,
-                  "clientOrderId": uuid.uuid4().hex[:32]},
+            json=self.order_body(symbol, side, qty, price),
             timeout=10)
+        if r.status_code >= 400:
+            raise Rejected(f"toss {r.status_code}: {r.text[:200]}")
+        return r.json()
+
+    def buy_amount(self, symbol: str, amount_usd: float) -> dict:
+        """해외주식을 달러 금액으로 시장가 매수한다. 소액 실계좌 검증에도 같은 경로를 쓴다."""
+        amount = Decimal(str(amount_usd)).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+        if amount <= 0:
+            raise Rejected("order amount must be positive")
+        if not C.LIVE_TRADING:
+            return {"skipped": "AI_TRADER_LIVE != 1", "venue": self.name,
+                    "symbol": symbol, "side": "BUY", "orderAmount": format(amount, "f")}
+        body = {"symbol": symbol, "side": "BUY", "orderType": "MARKET",
+                "orderAmount": format(amount, "f"), "clientOrderId": uuid.uuid4().hex[:32]}
+        r = self.session.post(
+            f"{C.TOSS_BASE}/api/v1/orders",
+            headers={**self._headers(account=True), "Content-Type": "application/json"},
+            json=body, timeout=10)
+        if r.status_code >= 400:
+            raise Rejected(f"toss {r.status_code}: {r.text[:200]}")
+        return r.json()
+
+    def order_detail(self, order_id: str) -> dict:
+        """주문 상태와 실제 체결 수량을 조회한다."""
+        r = self.session.get(f"{C.TOSS_BASE}/api/v1/orders/{order_id}",
+                             headers=self._headers(account=True), timeout=10)
         if r.status_code >= 400:
             raise Rejected(f"toss {r.status_code}: {r.text[:200]}")
         return r.json()
@@ -399,6 +503,7 @@ class KiwoomVenue(Venue):
     real 은 토스와 같은 규칙이다: AI_TRADER_LIVE=1 이어야만 나간다.
     """
     market = "KR"
+    name = "키움증권"
 
     def __init__(self):
         from .kiwoom import Kiwoom
@@ -413,16 +518,38 @@ class KiwoomVenue(Venue):
                 f"APP_KEY{C._KW_SUFFIX}/APP_SECRET{C._KW_SUFFIX} 없음")
 
     def positions(self) -> list[dict]:
+        return self._positions_from(self.api.balance())
+
+    @staticmethod
+    def _positions_from(bal: dict) -> list[dict]:
+        """잔고 응답 → 보유 종목. 파싱은 kiwoom.balance_rows 한 곳에서만 한다.
+
+        symbol/qty/avg 는 RoutedBroker.sync 가 장부를 맞출 때 쓰고, 나머지(현재가·평가금액·
+        평가손익)는 화면이 쓴다. 증권사가 안 준 값은 None 으로 남는다 — 매입가에서
+        되계산해 채우면 손익이 영원히 0 으로 보인다.
+        """
+        from .kiwoom import balance_rows
+        return [{**row, "qty": round_qty(row["symbol"], row["qty"])}
+                for row in balance_rows(bal)]
+
+    def orders(self) -> list[dict]:
+        """오늘 주문 현황(미체결+체결). 주문이 원장에 닿았는지 화면에서 확인하는 용도."""
+        return self.api.orders()
+
+    def summary(self) -> dict:
+        """대시보드용 모의계좌 요약. 같은 잔고 TR을 중복 호출하지 않는다."""
+        from .kiwoom import balance_total
         bal = self.api.balance()
-        rows = _first_list(bal, "acnt_evlt_remn_indv_tot", "output", "result")
-        out = []
-        for row in rows:
-            sym = str(row.get("stk_cd") or "").lstrip("A").strip()
-            qty = _num(row.get("rmnd_qty"))
-            if not sym or qty <= 0:
-                continue
-            out.append({"symbol": sym, "qty": int(qty), "avg": _num(row.get("pur_pric"))})
-        return out
+        dep = self.api.deposit()
+        cash = _num(dep.get("ord_alow_amt") or dep.get("entr"))
+        tot = balance_total(bal)
+        # 추정예탁자산이 비면 예수금+평가금액으로 대신한다. 둘 다 없으면 지어내지 않는다.
+        assets = tot["assets"] or ((cash + tot["eval_amount"])
+                                   if tot["eval_amount"] is not None else None)
+        return {"cash": cash, "equity": assets,
+                "pnl": tot["pnl"], "return_pct": tot["return_pct"],
+                "invested": tot["invested"], "eval_amount": tot["eval_amount"],
+                "positions": self._positions_from(bal)}
 
     def cash(self) -> float:
         dep = self.api.deposit()
@@ -491,20 +618,27 @@ class RoutedBroker(PaperBroker):
                 continue
             for row in rows:
                 sym = row["symbol"]
+                if row.get("avg") is None:
+                    # 매입가를 모르면 손절 -15% 도 20% 상한도 계산할 수 없다.
+                    # 0 으로 채우고 넘어가면 그 종목은 영원히 수익률 +∞ 로 보인다.
+                    failed[market] = f"{sym} 의 매입가를 증권사가 주지 않았다"
+                    break
                 sleeve = known.get(sym, "AGGRESSIVE")
-                positions[sym] = Position(sym, sleeve, int(row["qty"]), float(row["avg"]))
+                positions[sym] = Position(sym, sleeve, round_qty(sym, row["qty"]), float(row["avg"]))
         if failed:
             raise RuntimeError("실계좌 잔고를 못 읽었다 — 장부를 맞추지 못한 채로는 실매매하지 않는다: "
                                + " / ".join(f"{m}: {w}" for m, w in failed.items()))
 
         self.positions = positions
-        total_cash = sum(cash_by_market.values())
+        total_cash = sum(c * (C.USD_KRW if m == "US" else 1)
+                         for m, c in cash_by_market.items())
         # 슬리브별 현금은 증권사가 모른다. 사람이 정한 6:4 비율로 나눈다.
         self.cash = {k: total_cash * w for k, w in C.SLEEVES.items()}
         if self.day_start_equity <= 0:
             self.day_start_equity = self.equity({s: p.avg for s, p in positions.items()})
         return {"positions": len(positions), "cash": round(total_cash),
-                "by_market": {m: round(c) for m, c in cash_by_market.items()}}
+                "by_market": {m: round(c, 2) for m, c in cash_by_market.items()},
+                "usd_krw": C.USD_KRW}
 
     def venue_for(self, symbol: str) -> Venue:
         market = C.market_of(symbol)
@@ -514,24 +648,88 @@ class RoutedBroker(PaperBroker):
                            f"{self.blocked.get(market, '미지원 시장')}")
         return venue
 
-    def _send(self, symbol: str, side: str, qty: int, price: float) -> dict:
+    def _send(self, symbol: str, side: str, qty: float, price: float) -> dict:
         return self.venue_for(symbol).send(symbol, side, qty, price)
 
-    def buy(self, symbol: str, sleeve: str, qty: int, price: float) -> dict:
+    def _probe(self) -> PaperBroker:
+        return PaperBroker(
+            cash=dict(self.cash),
+            positions={s: Position(p.symbol, p.sleeve, p.qty, p.avg)
+                       for s, p in self.positions.items()},
+            realized=dict(self.realized), day=self.day,
+            day_start_equity=self.day_start_equity, halted=self.halted)
+
+    def buy(self, symbol: str, sleeve: str, qty: float, price: float) -> dict:
         self.venue_for(symbol)               # 창구가 없으면 장부를 건드리기 전에 막는다
-        fill = super().buy(symbol, sleeve, qty, price)  # 가드레일 먼저 통과해야 한다
-        fill["broker"] = self._send(symbol, "BUY", qty, price)
+        self._probe().buy(symbol, sleeve, qty, price)
+        sent = self._send(symbol, "BUY", qty, price)
+        if sent.get("skipped"):
+            raise Rejected(str(sent["skipped"]))
+        fill = super().buy(symbol, sleeve, qty, price)
+        fill["broker"] = sent
         return fill
 
-    def sell(self, symbol: str, qty: int, price: float) -> dict:
+    def sell(self, symbol: str, qty: float, price: float) -> dict:
         self.venue_for(symbol)
+        probe_fill = self._probe().sell(symbol, qty, price)
+        sent = self._send(symbol, "SELL", probe_fill["qty"], price)
+        if sent.get("skipped"):
+            raise Rejected(str(sent["skipped"]))
         fill = super().sell(symbol, qty, price)
-        fill["broker"] = self._send(symbol, "SELL", fill["qty"], price)
+        fill["broker"] = sent
         return fill
 
 
-def make_broker(paper: bool = True):
+class HybridMockBroker(PaperBroker):
+    """국내는 키움 모의주문, 해외는 로컬 모의체결을 쓰는 브로커."""
+    mode = "mock:KR=키움+US=paper"
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.kr = KiwoomVenue() if C.have_kiwoom_keys() and C.KIWOOM_MODE == "demo" else None
+
+    @classmethod
+    def load(cls, path=None):
+        return super().load(path or C.MOCK_STATE)
+
+    def save(self, path=None) -> None:
+        return super().save(path or C.MOCK_STATE)
+
+    def _probe(self) -> PaperBroker:
+        return PaperBroker(
+            cash=dict(self.cash),
+            positions={s: Position(p.symbol, p.sleeve, p.qty, p.avg)
+                       for s, p in self.positions.items()},
+            realized=dict(self.realized), day=self.day,
+            day_start_equity=self.day_start_equity, halted=self.halted)
+
+    def buy(self, symbol: str, sleeve: str, qty: float, price: float) -> dict:
+        self._probe().buy(symbol, sleeve, qty, price)
+        sent = None
+        if C.market_of(symbol) == "KR":
+            if self.kr is None:
+                raise Rejected("키움 모의투자 창구가 없다")
+            sent = self.kr.send(symbol, "BUY", qty, price)
+        fill = super().buy(symbol, sleeve, qty, price)
+        fill["broker"] = sent or {"venue": "해외 로컬 모의원장", "paper": True}
+        return fill
+
+    def sell(self, symbol: str, qty: float, price: float) -> dict:
+        probe_fill = self._probe().sell(symbol, qty, price)
+        sent = None
+        if C.market_of(symbol) == "KR":
+            if self.kr is None:
+                raise Rejected("키움 모의투자 창구가 없다")
+            sent = self.kr.send(symbol, "SELL", probe_fill["qty"], price)
+        fill = super().sell(symbol, qty, price)
+        fill["broker"] = sent or {"venue": "해외 로컬 모의원장", "paper": True}
+        return fill
+
+
+def make_broker(paper: bool = True, mock: bool = False):
     """paper=True 면 자체 장부, False 면 시장별로 실제 증권사에 낸다."""
+    if mock:
+        return HybridMockBroker.load()
     if paper:
         return PaperBroker.load()
     return RoutedBroker.load()

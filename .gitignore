@@ -15,7 +15,11 @@ data/
 lab/mlflow.db
 lab/mlartifacts/
 lab/paper_state.json
+lab/mock_state.json
+lab/kiwoom_day.json
 lab/policy_history/
+# 증권사 액세스 토큰. 계좌를 열 수 있는 자격증명이다 — 절대 커밋하지 않는다.
+lab/kiwoom_token.json
 research/*.jsonl
 research/*.md
 !research/toss_openapi_reference.md

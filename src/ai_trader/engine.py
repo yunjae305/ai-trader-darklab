@@ -47,7 +47,10 @@ def _alive(pid: int | None) -> bool:
 def _argv() -> tuple[list[str], str]:
     """어떤 모드로 띄울지. 사람이 .env 로 정해 둔 것을 그대로 따른다."""
     args = [sys.executable, "-m", "ai_trader.loop"]
-    if C.LIVE_TRADING and (C.have_broker_keys() or C.have_kiwoom_keys()):
+    if C.KIWOOM_MODE == "demo" and C.have_kiwoom_keys():
+        args += ["--mock"]
+        mode = "모의 — 국내 키움 / 해외 로컬원장 / 토스 시세"
+    elif C.LIVE_TRADING and (C.have_broker_keys() or C.have_kiwoom_keys()):
         args += ["--live", "--live-data"]
         mode = "실계좌 (국내 키움 / 해외 토스)"
     elif C.have_broker_keys():

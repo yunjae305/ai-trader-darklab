@@ -8,7 +8,7 @@ import traceback
 from . import brain, broker as bk, config as C, correlation, data, journal
 
 
-def recent_history(feed, limit: int = 12) -> list[dict]:
+def recent_history(feed, limit: int = 12, symbols: list[str] | None = None) -> list[dict]:
     """과거 판단 + 그 뒤 실제로 가격이 어떻게 됐는지. 이것이 학습 신호다."""
     out = []
     for rec in journal.read("decisions", limit=limit * 3):
@@ -16,6 +16,8 @@ def recent_history(feed, limit: int = 12) -> list[dict]:
         if not brain.is_ai(rec.get("brain")):
             continue
         sym = rec.get("symbol")
+        if symbols is not None and sym not in symbols:
+            continue
         then = rec.get("price") or 0
         now = feed.price(sym) if sym else 0
         out.append({
@@ -29,12 +31,12 @@ def recent_history(feed, limit: int = 12) -> list[dict]:
     return out[-limit:]
 
 
-def held_correlation(broker, feed) -> dict:
+def held_correlation(broker, feed, symbols: list[str] | None = None) -> dict:
     """보유 종목끼리 같이 움직이는가. 종목 수가 아니라 덩어리 수가 실제 분산이다.
 
     막지 않는다 — brain 에게 보여주기만 한다. 무엇을 살지는 brain 이 정한다.
     """
-    held = list(broker.positions)
+    held = [s for s in broker.positions if symbols is None or s in symbols]
     if len(held) < 2:
         return {"symbols": len(held), "note": "보유 2종목 미만 — 상관관계 없음"}
     try:
@@ -71,10 +73,11 @@ def enforce_stop_loss(broker, prices: dict[str, float]) -> list[dict]:
 
 def cycle(broker, feed, mlf=None, step: int | None = None, with_news: bool = True) -> dict:
     """한 사이클: 관측 → 판단 → 집행 → 기록. 어떤 단계가 죽어도 랩은 다음 사이클로 간다."""
-    prices = feed.prices(C.UNIVERSE)
+    active = [s for s in C.UNIVERSE if data.feed_open_for(feed, s)]
+    prices = feed.prices(active)
     broker.roll_day(prices)
     snapshot = broker.snapshot(prices)
-    snapshot["diversification"] = held_correlation(broker, feed)
+    snapshot["diversification"] = held_correlation(broker, feed, active)
 
     killed = broker.check_kill_switch(prices)
     if killed:
@@ -82,11 +85,13 @@ def cycle(broker, feed, mlf=None, step: int | None = None, with_news: bool = Tru
                                   "equity": snapshot["equity"]})
 
     # 손절은 brain 보다 먼저다. 경계는 판단을 기다리지 않는다.
-    results = enforce_stop_loss(broker, prices)
+    active_prices = {s: prices.get(s, 0) for s in active}
+    results = enforce_stop_loss(broker, active_prices)
 
-    observations = data.observe(feed, C.UNIVERSE, with_news=with_news)
-    verdict = brain.decide(snapshot, observations, recent_history(feed))
-    orders = brain.validate(verdict.get("decisions", []), snapshot, prices)
+    observations = data.observe(feed, active, with_news=with_news)
+    verdict = brain.decide(snapshot, observations, recent_history(feed, symbols=active))
+    orders = brain.validate(verdict.get("decisions", []), snapshot, active_prices,
+                            universe=active)
 
     for d in orders:
         sym = d["symbol"]
@@ -107,7 +112,7 @@ def cycle(broker, feed, mlf=None, step: int | None = None, with_news: bool = Tru
                                       "trace": traceback.format_exc()[-800:]})
         results.append(journal.jot("decisions", rec))
 
-    prices = feed.prices(C.UNIVERSE)
+    prices = feed.prices(active)
     after = broker.snapshot(prices)
     broker.save()
 
@@ -115,11 +120,13 @@ def cycle(broker, feed, mlf=None, step: int | None = None, with_news: bool = Tru
         "mode": broker.mode, "brain": verdict.get("brain"),
         "market_view": verdict.get("market_view", "")[:600],
         "lesson": verdict.get("lesson", "")[:400],
+        "watchlist": verdict.get("watchlist", [])[:8],
         "proposed": len(verdict.get("decisions", [])), "executed": len(results),
         "filled": sum(1 for r in results if r["status"] == "FILLED"),
         "equity": after["equity"], "day_return_pct": after["day_return_pct"],
         "usage": verdict.get("usage", {}), "error": verdict.get("error"),
     })
+    brain.remember_lesson(verdict.get("lesson", ""), verdict.get("brain", ""))
     journal.log_metrics(mlf, {
         "equity": after["equity"],
         "day_return_pct": after["day_return_pct"],
@@ -136,16 +143,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--paper", action="store_true", help="모의 계좌로 실행 (기본값)")
     ap.add_argument("--live", action="store_true",
                     help="실계좌로 라우팅 — 국내는 키움, 해외는 토스")
+    ap.add_argument("--mock", action="store_true",
+                    help="국내 키움 모의주문 + 해외 로컬 모의원장")
     ap.add_argument("--live-data", action="store_true",
                     help="모의투자: 페이퍼 계좌 + 토스 실시세 (주문은 안 나간다)")
     ap.add_argument("--once", action="store_true", help="한 사이클만 돌고 종료")
     ap.add_argument("--no-news", action="store_true", help="뉴스 수집 건너뛰기")
     args = ap.parse_args(argv)
 
-    paper = not args.live
-    broker = bk.make_broker(paper=paper)
-    feed = data.make_feed(paper=paper, live_data=args.live_data)
-    if not paper:
+    paper = not (args.live or args.mock)
+    broker = bk.make_broker(paper=paper, mock=args.mock)
+    if args.mock:
+        feed = data.RoutedFeed(kr=data.KiwoomFeed(),
+                               us=data.TossFeed() if C.have_broker_keys() else None)
+    else:
+        feed = data.make_feed(paper=paper, live_data=args.live_data)
+    if args.live:
         # 내부 장부가 실계좌와 어긋나면 가드레일이 허구 위에서 계산된다. 시작 전에 맞춘다.
         try:
             synced = broker.sync()
@@ -156,7 +169,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[darklab] 중단 — {exc}")
             return 1
 
-    brain_name = C.BRAIN_MODEL if C.have_brain_key() else "quant-fallback(LLM 키 없음)"
+    if args.mock:
+        print("[darklab] 모의자본 시장 상한: 국내 50% / 해외 50%")
+    brain_name = ({"api": C.BRAIN_MODEL, "cli": f"{C.BRAIN_MODEL}(cli→codex)",
+                   "codex": f"{C.CODEX_MODEL or 'codex'}(cli)"}
+                  .get(C.brain_backend(), "quant-fallback(LLM 없음)"))
     print(f"[darklab] broker={broker.mode} feed={feed.source} brain={brain_name}")
 
     with journal.mlflow_run("darklab-loop", params={

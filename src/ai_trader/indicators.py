@@ -27,11 +27,15 @@ def _num(v):
 
 
 def from_kiwoom(rows):
-    """키움 ka10081(주식일봉차트) 응답 → 공통 캔들. 응답은 최신→과거라 뒤집는다."""
+    """키움 ka10081(주식일봉차트) 응답 → 공통 캔들. 응답은 최신→과거라 뒤집는다.
+
+    장 시작 전에는 오늘 자리에 거래량 0·시고저종이 모두 같은 기준가 봉이 하나 붙어 온다.
+    체결이 없었으므로 그건 캔들이 아니다 — 지표에 넣으면 변동성 0 인 하루로 읽힌다.
+    """
     out = [{"date": r["dt"], "open": abs(_num(r["open_pric"])), "high": abs(_num(r["high_pric"])),
             "low": abs(_num(r["low_pric"])), "close": abs(_num(r["cur_prc"])),
             "volume": _num(r["trde_qty"])} for r in rows]
-    return out[::-1]
+    return [c for c in out[::-1] if c["volume"] > 0]
 
 
 def from_toss(candles):

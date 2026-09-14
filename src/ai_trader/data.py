@@ -9,18 +9,22 @@ from __future__ import annotations
 import math
 import os
 import random
+import threading
 import time
 from concurrent import futures
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import requests
 
 from . import config as C, indicators, news as news_feed, quant, sectors
 
 KST = timezone(timedelta(hours=9))
+ET = ZoneInfo("America/New_York")
 # ponytail: KRX 정규장만 본다. NXT 연장세션(08:00~20:00)이 필요해지면 여기만 넓힌다.
 SESSION_KST = (9 * 60, 15 * 60 + 30)
+SESSION_ET = (9 * 60 + 30, 16 * 60)
 # 관측 팩을 만들 때 종목별로 병렬 조회한다. 토스 시세 한도(초당 15~20)를 넘지 않는 선.
 FETCH_WORKERS = int(os.getenv("AI_TRADER_FETCH_WORKERS", "8"))
 
@@ -32,6 +36,9 @@ NAMES = {
     "196170": "알테오젠", "058470": "리노공업", "277810": "레인보우로보틱스",
     "042700": "한미반도체", "022100": "포스코DX", "095340": "ISC",
     "900140": "엘브이엠씨홀딩스", "053610": "프로텍",
+    "AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA", "AMZN": "Amazon",
+    "GOOGL": "Alphabet", "META": "Meta", "TSLA": "Tesla",
+    "SPY": "SPDR S&P 500", "QQQ": "Invesco QQQ", "SPYM": "SPDR Portfolio S&P 500",
 }
 
 
@@ -39,6 +46,13 @@ def session_now(now: datetime | None = None) -> bool:
     """지금이 정규장 시간대인가. 휴장일 여부는 모른다 — 개장일 판정과 AND 로 쓴다."""
     now = now or datetime.now(KST)
     return SESSION_KST[0] <= now.hour * 60 + now.minute < SESSION_KST[1]
+
+
+def us_session_now(now: datetime | None = None, order_amount: bool = False) -> bool:
+    """미국 정규장 시간대인가. 금액·소수점 주문은 마감 1시간 전까지만 허용된다."""
+    now = now.astimezone(ET) if now is not None else datetime.now(ET)
+    end = 15 * 60 if order_amount else SESSION_ET[1]
+    return SESSION_ET[0] <= now.hour * 60 + now.minute < end
 
 
 def trading_day_from(body) -> bool | None:
@@ -131,8 +145,11 @@ class SyntheticFeed:
         self.cursor += 1
         return True
 
-    def is_open(self) -> bool:
+    def is_open(self, market: str | None = None) -> bool:
         return True  # 시뮬레이터에는 주말이 없다
+
+    def is_open_for(self, symbol: str) -> bool:
+        return True
 
 
 @dataclass
@@ -143,7 +160,7 @@ class TossFeed:
         from .broker import TossVenue
         self._auth = TossVenue()  # 시세는 계좌 헤더 없이 토큰만으로 부른다
         self.session = requests.Session()
-        self._cal: tuple[float, bool] | None = None
+        self._cal: dict[str, tuple[float, bool]] = {}
 
     def _get(self, path: str, **params):
         for _ in range(3):
@@ -157,25 +174,37 @@ class TossFeed:
             return r.json()
         r.raise_for_status()
 
-    def is_open(self) -> bool:
-        """휴장일은 토스 달력이, 세션 시간은 시계가 판단한다. 달력이 죽으면 요일로 대체한다."""
-        now = datetime.now(KST)
-        if not session_now(now):
+    def is_open(self, market: str | None = None) -> bool:
+        """휴장일은 토스 달력이, 시장별 세션 시간은 현지 시계가 판단한다."""
+        if market is None:
+            markets = {C.market_of(s) for s in C.UNIVERSE}
+            return any(self.is_open(m) for m in markets)
+        if market not in C.MARKETS:
             return False
-        if self._cal and time.time() - self._cal[0] < 3600:
-            return self._cal[1]
+        now = datetime.now(KST if market == "KR" else ET)
+        in_session = session_now(now) if market == "KR" else us_session_now(now)
+        if not in_session:
+            return False
+        cached = self._cal.get(market)
+        if cached and time.time() - cached[0] < 3600:
+            return cached[1]
         try:
-            trading = trading_day_from(self._get("/api/v1/market-calendar/KR"))
+            trading = trading_day_from(self._get(f"/api/v1/market-calendar/{market}"))
         except Exception:
             trading = None
         if trading is None:
             trading = now.weekday() < 5  # 달력을 못 읽었다 — 공휴일은 못 거른다
-        self._cal = (time.time(), trading)
+        self._cal[market] = (time.time(), trading)
         return trading
 
+    def is_open_for(self, symbol: str) -> bool:
+        return self.is_open(C.market_of(symbol))
+
     def candles(self, symbol: str, n: int = 60) -> list[dict]:
-        body = self._get("/api/v1/candles", symbols=symbol, interval="1d", count=n)
-        rows = body.get("candles") or body.get("result") or []
+        body = self._get("/api/v1/candles", symbol=symbol, interval="1d", count=n,
+                         adjusted="true")
+        node = body.get("result", body)
+        rows = node.get("candles", []) if isinstance(node, dict) else []
         out = []
         for row in rows:
             close = row.get("close", row.get("closePrice"))
@@ -200,7 +229,8 @@ class TossFeed:
     def prices(self, symbols: list[str]) -> dict[str, float]:
         body = self._get("/api/v1/prices", symbols=",".join(symbols))
         rows = body.get("prices") or body.get("result") or []
-        return {r.get("symbol"): float(r.get("close") or r.get("price") or 0) for r in rows}
+        return {r.get("symbol"): float(r.get("lastPrice") or r.get("close") or
+                                         r.get("price") or 0) for r in rows}
 
     def price(self, symbol: str) -> float:
         return self.prices([symbol]).get(symbol, 0.0)
@@ -225,12 +255,36 @@ class KiwoomFeed:
     def __post_init__(self):
         from .kiwoom import Kiwoom
         self.api = Kiwoom()
+        self._candles: dict[str, tuple[float, list[dict]]] = {}
+        self._request_lock = threading.Lock()
+        self._last_request = 0.0
 
     def candles(self, symbol: str, n: int = 60) -> list[dict]:
-        return self.api.candles(symbol, n)
+        cached = self._candles.get(symbol)
+        if cached and time.time() - cached[0] < 300 and len(cached[1]) >= n:
+            return cached[1][-n:]
+        # ka10081은 모의 API의 호출 한도가 낮다. 병렬 관측도 이 구간에서는 직렬화한다.
+        with self._request_lock:
+            cached = self._candles.get(symbol)
+            if cached and time.time() - cached[0] < 300 and len(cached[1]) >= n:
+                return cached[1][-n:]
+            wait = 1.05 - (time.monotonic() - self._last_request)
+            if wait > 0:
+                time.sleep(wait)
+            for attempt in range(3):
+                try:
+                    rows = self.api.candles(symbol, max(n, 60))
+                    break
+                except Exception as exc:
+                    if "429" not in str(exc) or attempt == 2:
+                        raise
+                    time.sleep(1.2 * (attempt + 1))
+            self._last_request = time.monotonic()
+            self._candles[symbol] = (time.time(), rows)
+            return rows[-n:]
 
     def price(self, symbol: str) -> float:
-        c = self.candles(symbol, 1)
+        c = self.candles(symbol, 60)
         return c[-1]["close"] if c else 0.0
 
     def prices(self, symbols: list[str]) -> dict[str, float]:
@@ -239,10 +293,15 @@ class KiwoomFeed:
     def advance(self) -> bool:
         return False
 
-    def is_open(self) -> bool:
+    def is_open(self, market: str | None = None) -> bool:
         # 키움에는 휴장일 조회 TR 이 없다 — 요일로 대체하므로 공휴일은 못 거른다.
+        if market not in (None, "KR"):
+            return False
         now = datetime.now(KST)
         return session_now(now) and now.weekday() < 5
+
+    def is_open_for(self, symbol: str) -> bool:
+        return C.market_of(symbol) == "KR" and self.is_open()
 
 
 @dataclass
@@ -275,13 +334,75 @@ class RoutedFeed:
         return f.price(symbol) if f is not None else 0.0
 
     def prices(self, symbols: list[str]) -> dict[str, float]:
-        return {s: self.price(s) for s in symbols}
+        groups: list[tuple[object, list[str]]] = []
+        for s in symbols:
+            f = self._feed(s)
+            if f is not None:
+                hit = next((names for known, names in groups if known is f), None)
+                if hit is None:
+                    hit = []
+                    groups.append((f, hit))
+                hit.append(s)
+        out = {s: 0.0 for s in symbols}
+        for f, names in groups:
+            out.update(f.prices(names))
+        return out
 
     def advance(self) -> bool:
         return False
 
     def is_open(self) -> bool:
-        return any(f.is_open() for f in (self.kr, self.us) if f is not None)
+        markets = {C.market_of(s) for s in C.UNIVERSE}
+        return (("KR" in markets and self.kr is not None and self.kr.is_open("KR")) or
+                ("US" in markets and self.us is not None and self.us.is_open("US")))
+
+    def is_open_for(self, symbol: str) -> bool:
+        f = self._feed(symbol)
+        if f is None:
+            return False
+        method = getattr(f, "is_open_for", None)
+        return method(symbol) if method else f.is_open()
+
+
+def feed_open_for(feed, symbol: str) -> bool:
+    """종목 시장이 지금 주문 가능한지 피드별 공통 방식으로 묻는다."""
+    method = getattr(feed, "is_open_for", None)
+    if method:
+        return bool(method(symbol))
+    return bool(feed.is_open())
+
+
+@dataclass
+class SessionFeed:
+    """열린 시장은 실시세, 닫힌 시장은 저장 일봉으로 보여주는 대시보드 피드."""
+    live: object
+    closed: object
+    source: str = "session-aware"
+
+    def _feed(self, symbol: str):
+        return self.live if feed_open_for(self.live, symbol) else self.closed
+
+    def candles(self, symbol: str, n: int = 60) -> list[dict]:
+        return self._feed(symbol).candles(symbol, n)
+
+    def price(self, symbol: str) -> float:
+        return self._feed(symbol).price(symbol)
+
+    def prices(self, symbols: list[str]) -> dict[str, float]:
+        active = [s for s in symbols if feed_open_for(self.live, s)]
+        inactive = [s for s in symbols if s not in active]
+        out = self.closed.prices(inactive)
+        out.update(self.live.prices(active))
+        return out
+
+    def advance(self) -> bool:
+        return False
+
+    def is_open(self) -> bool:
+        return self.live.is_open()
+
+    def is_open_for(self, symbol: str) -> bool:
+        return feed_open_for(self.live, symbol)
 
 
 def make_feed(paper: bool = True, live_data: bool = False):
@@ -314,6 +435,7 @@ def observe(feed, symbols: list[str], with_news: bool = True,
         vols = [b["volume"] for b in bars]
         row = {
             "symbol": sym,
+            "as_of": bars[-1].get("date", "") if bars else "",
             "market": C.market_of(sym),
             "name": NAMES.get(sym, sym),
             "sector": sectors.of(sym),  # 모르면 빈 문자열. 추측해서 채우지 않는다.

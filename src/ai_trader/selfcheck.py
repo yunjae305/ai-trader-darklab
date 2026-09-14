@@ -53,6 +53,24 @@ def cannot_spend_more_than_sleeve_cash():
     raise AssertionError("슬리브 현금을 초과한 매수가 통과했다")
 
 
+def market_cap_is_half_each():
+    assert C.MARKET_WEIGHTS == {"KR": 0.5, "US": 0.5}
+    b = bk.PaperBroker.fresh(10_000_000)
+    old = C.MARKET_WEIGHTS["US"]
+    C.MARKET_WEIGHTS["US"] = 0.01
+    try:
+        try:
+            b.buy("AAPL", "AGGRESSIVE", 1, 100)
+        except bk.Rejected as exc:
+            assert "market cap" in str(exc), exc
+        else:
+            raise AssertionError("해외 시장 자본 상한을 넘긴 주문이 통과했다")
+    finally:
+        C.MARKET_WEIGHTS["US"] = old
+    snap = b.snapshot({})
+    assert snap["market_allocation"]["KR"]["max_weight"] == 0.5
+
+
 def buy_sell_rebuy_is_free():
     b = bk.PaperBroker.fresh(10_000_000)
     b.buy("005930", "STABLE", 10, 70_000)
@@ -62,6 +80,61 @@ def buy_sell_rebuy_is_free():
     assert b.positions["005930"].sleeve == "AGGRESSIVE"
     b.sell("005930", 2, 72_000)               # 부분 매도
     assert b.positions["005930"].qty == 3
+
+
+def fractional_shares_survive_the_round_trip():
+    """$3.71 로 NVDA 한 주는 못 산다. 0.017주는 살 수 있어야 한다.
+
+    국내는 반대다 — KRX 에 소수점 주식이 없으므로 0.5주 주문은 0주로 잘려야 한다.
+    """
+    assert bk.round_qty("NVDA", 0.1131549) == 0.113154, "해외 수량이 6자리에서 안 잘린다"
+    assert bk.round_qty("NVDA", "0.123456") == 0.123456, "정확한 6자리가 float 오차로 줄었다"
+    assert bk.round_qty("NVDA", "not-a-number") == 0, "잘못된 수량이 주문 후보로 남았다"
+    assert bk.round_qty("NVDA", float("nan")) == 0, "NaN 수량이 주문 후보로 남았다"
+    assert bk.round_qty("005930", 3.9) == 3.0, "국내에 소수점 주식이 생겼다"
+    assert bk.round_qty("NVDA", 0) == 0 and bk.round_qty("NVDA", -5) == 0
+
+    b = bk.PaperBroker.fresh(1_000_000)
+    b.buy("NVDA", "AGGRESSIVE", 0.017, 212.04)
+    assert b.positions["NVDA"].qty == 0.017, "소수점 매수가 장부에 안 남았다"
+
+    b.sell("NVDA", 0.007, 213.0)
+    assert abs(b.positions["NVDA"].qty - 0.01) < bk.QTY_EPSILON, "부분 매도 후 수량이 틀렸다"
+    b.sell("NVDA", 0.01, 213.0)
+    assert "NVDA" not in b.positions, "전량 매도인데 먼지가 남아 재매수가 막힌다"
+
+    # 국내는 한 주 미만이면 아예 주문이 안 나가야 한다 (0 으로 잘리므로 거절)
+    try:
+        b.buy("005930", "STABLE", 0.5, 70_000)
+        raise AssertionError("국내에서 0.5주가 체결됐다")
+    except bk.Rejected:
+        pass
+
+
+def fractional_buy_goes_out_as_amount():
+    """토스는 소수점 매수를 quantity 로 안 받는다. 금액(orderAmount)으로 바꿔 보내야 한다.
+
+    quantity 로 보내면 400 invalid-request 다 — 주문이 나간 줄 알고 장부에만 적히는 게
+    제일 위험하다.
+    """
+    body = bk.TossVenue.order_body("NVDA", "BUY", 0.017, 212.04)
+    assert body["orderType"] == "MARKET", "소수점 매수가 지정가로 나간다"
+    assert "quantity" not in body, "소수점 매수에 quantity 를 실었다 — 400 난다"
+    assert body["orderAmount"] == "3.60", f"금액이 틀렸다: {body}"
+
+    sell = bk.TossVenue.order_body("NVDA", "SELL", 0.113154, 212.04)
+    assert sell["orderType"] == "MARKET" and sell["quantity"] == "0.113154"
+    assert "orderAmount" not in sell, "매도에 금액을 실었다"
+
+    whole = bk.TossVenue.order_body("NVDA", "BUY", 3.0, 212.04)
+    assert whole["orderType"] == "LIMIT" and whole["quantity"] == "3", "정수 주문까지 시장가로 나간다"
+    assert whole["price"] == "212.04", "토스 decimal 필드가 문자열이 아니다"
+    assert bk.TossVenue.order_body("PENNY", "BUY", 1, 0.12349)["price"] == "0.1234"
+
+    # 소수점 6자리를 넘기면 토스가 400 을 준다. round_qty 가 그 전에 잘라야 한다.
+    assert len(bk.TossVenue.order_body("NVDA", "SELL",
+                                       bk.round_qty("NVDA", 0.1234567), 1)["quantity"]
+               .split(".")[1]) == 6
 
 
 def kill_switch_halts_trading():
@@ -278,6 +351,79 @@ def kiwoom_rejects_bad_orders_before_sending():
     assert C.have_kiwoom_keys() or C.have_broker_keys(), "키도 없이 실계좌 브로커가 만들어졌다"
 
 
+def kiwoom_does_not_burn_its_rate_limit():
+    """유량 제한에 걸리면 계좌·시세·주문이 한꺼번에 죽는다. 두 구멍을 막아 뒀다.
+
+    1) 일봉은 base_dt 를 채워 보낸다. 빈 값이면 원장이 1511(필수 입력 값 없음)로 거절한다.
+    2) 토큰은 프로세스 사이에서 나눠 쓴다. 대시보드와 매매 루프가 각자 발급받으면 429 다.
+    """
+    import time as _time
+    from . import kiwoom as K
+
+    sent = []
+    api = K.Kiwoom(app_key="k", app_secret="s", mode="demo")
+    api._token, api._expires_at = "tok", _time.time() + 600
+    api._post = lambda path, body, **kw: (sent.append((kw.get("api_id"), body))
+                                          or {"stk_dt_pole_chart_qry": []})
+    api.candles("005930")
+    (api_id, body), = sent
+    assert api_id == "ka10081", sent
+    assert body.get("base_dt"), "일봉이 base_dt 없이 나간다 — 원장이 1511 로 거절한다"
+    assert len(body["base_dt"]) == 8 and body["base_dt"].isdigit(), body
+
+    original = K.TOKEN_CACHE
+    with tempfile.TemporaryDirectory() as tmp:
+        K.TOKEN_CACHE = Path(tmp) / "kiwoom_token.json"
+        try:
+            K._save_token("demo:test", "shared-token", _time.time() + 600)
+            fresh = K.Kiwoom(app_key="k", app_secret="s", mode="demo")
+            fresh._cache_id = lambda: "demo:test"
+            fresh._post = lambda *a, **kw: (_ for _ in ()).throw(
+                AssertionError("캐시에 살아있는 토큰이 있는데 또 발급받았다"))
+            assert fresh.token() == "shared-token", "저장된 토큰을 안 쓴다"
+            K._save_token("demo:expired", "old", _time.time() - 1)
+            assert K._load_token("demo:expired") is None, "만료된 토큰을 그대로 쓴다"
+            assert K._load_token("demo:없음") is None
+        finally:
+            K.TOKEN_CACHE = original
+
+
+def account_screen_never_invents_numbers():
+    """계좌 화면은 증권사가 준 값만 적는다.
+
+    한때 현재가 자리에 매입가를, 평가금액 자리에 매입금액을 넣고 손익을 0 으로 적었다.
+    그러면 화면은 언제나 "손익 0원"이라고 단언한다 — 모르는 것을 안다고 말하는 것이다.
+    없는 값은 None 으로 내려가서 화면에 '—' 로 찍혀야 한다.
+    """
+    from . import kiwoom as K
+
+    full = {"acnt_evlt_remn_indv_tot": [
+        {"stk_cd": "A005930", "stk_nm": "삼성전자", "rmnd_qty": "0000000010",
+         "pur_pric": "000000070000", "cur_prc": "+000000068500",
+         "pur_amt": "000000000700000", "evlt_amt": "000000000685000",
+         "evltv_prft": "-000000000015000", "prft_rt": "-000000002.14"}]}
+    row = bk.KiwoomVenue._positions_from(full)[0]
+    assert row["last"] == 68_500, f"현재가를 매입가로 덮었다: {row}"
+    assert row["value"] == 685_000, f"평가금액이 매입금액으로 적혔다: {row}"
+    assert row["pnl"] == -15_000 and row["pnl_pct"] == -2.14, f"손실이 사라졌다: {row}"
+
+    # 증권사가 현재가·평가금액을 안 줬을 때 — 매입가에서 되계산하면 안 된다.
+    bare = bk.KiwoomVenue._positions_from(
+        {"acnt_evlt_remn_indv_tot": [{"stk_cd": "005930", "rmnd_qty": "10",
+                                      "pur_pric": "000000070000"}]})[0]
+    assert bare["avg"] == 70_000, bare
+    for field in ("last", "value", "pnl", "pnl_pct"):
+        assert bare[field] is None, f"{field} 를 지어냈다: {bare[field]!r}"
+
+    total = K.balance_total({"tot_evlt_pl": "-000000000015000", "tot_prft_rt": "-000000002.14"})
+    assert total["pnl"] == -15_000 and total["return_pct"] == -2.14, total
+    assert total["eval_amount"] is None, "안 준 합계를 0 으로 채웠다"
+
+    # 슬리브는 증권사 계좌에 없는 개념이다 — 비율로 쪼개 만들어 내면 안 된다.
+    src = (Path(__file__).parent / "dashboard.py").read_text(encoding="utf-8")
+    assert '"sleeves": {}' in src, "계좌 화면이 슬리브를 지어낸다"
+
+
 def env_file_actually_reaches_config():
     """.env 에 키를 넣으면 실제로 읽혀야 한다. 안 읽으면 키를 넣어도 아무 일이 안 일어난다."""
     import os
@@ -303,12 +449,21 @@ def env_file_actually_reaches_config():
 
 
 def no_llm_key_still_trades_on_rules():
-    """LLM 키가 없어도 무작위가 아니라 퀀트 점수로 매매해야 한다."""
+    """LLM 이 아예 없어도 무작위가 아니라 퀀트 점수로 매매해야 한다.
+
+    이 PC 에 claude CLI 가 깔려 있으면 그쪽이 잡히므로, 여기서는 백엔드를 명시적으로 끈다.
+    끈 상태에서도 매매가 되는지가 검사의 요지다.
+    """
     feed = data.SyntheticFeed()
     b = bk.PaperBroker.fresh(10_000_000)
     prices = feed.prices(C.UNIVERSE)
     obs = data.observe(feed, C.UNIVERSE, with_news=False)
-    v = brain.decide(b.snapshot(prices), obs)
+    before = C.BRAIN_BACKEND
+    C.BRAIN_BACKEND = "off"
+    try:
+        v = brain.decide(b.snapshot(prices), obs)
+    finally:
+        C.BRAIN_BACKEND = before
     assert v["brain"] == "quant-fallback", f"퀀트 대역이 안 잡혔다: {v['brain']}"
     assert not brain.is_ai(v["brain"]), "퀀트 판단이 LLM 판단으로 분류됐다"
     assert all(brain.is_ai(x) is False for x in
@@ -318,7 +473,7 @@ def no_llm_key_still_trades_on_rules():
     # 점수가 매수선을 넘으면 실제로 사야 한다
     high = [{**o, "quant": {"score": 90.0, "reasons": ["테스트"], "parts": {}, "mode": "trend"}}
             for o in obs[:2]]
-    out = brain.decide(b.snapshot(prices), high)
+    out = brain.decide(b.snapshot(prices), high, allow_cli=False)
     orders = brain.validate(out["decisions"], b.snapshot(prices), prices)
     assert orders and all(d["action"] == "BUY" for d in orders), f"90점인데 안 샀다: {out['decisions']}"
     assert all(d["quantity"] > 0 for d in orders)
@@ -326,12 +481,35 @@ def no_llm_key_still_trades_on_rules():
     # 점수가 매도선 아래면 보유를 정리해야 한다
     b.buy(obs[0]["symbol"], "STABLE", 3, prices[obs[0]["symbol"]])
     low = [{**obs[0], "quant": {"score": 5.0, "reasons": ["테스트"], "parts": {}, "mode": "trend"}}]
-    out = brain.decide(b.snapshot(prices), low)
+    out = brain.decide(b.snapshot(prices), low, allow_cli=False)
     assert [d["action"] for d in out["decisions"]] == ["SELL"], f"5점인데 안 팔았다: {out['decisions']}"
 
     # 관측 팩에 점수가 아예 없으면 배선 점검 스텁으로 떨어진다
     bare = [{k: x for k, x in o.items() if k != "quant"} for o in obs]
-    assert brain.decide(b.snapshot(prices), bare)["brain"] == "offline-stub"
+    assert brain.decide(b.snapshot(prices), bare, allow_cli=False)["brain"] == "offline-stub"
+
+
+def claude_limit_falls_back_to_codex():
+    """auto에서 Claude 구독 한도가 끝나면 같은 판단을 Codex CLI가 이어받아야 한다."""
+    old_backend = C.BRAIN_BACKEND
+    old_claude = brain.cli_complete
+    old_codex = brain.codex_complete
+    old_quota = brain._CLAUDE_QUOTA_EXHAUSTED
+    C.BRAIN_BACKEND = "auto"
+    brain._CLAUDE_QUOTA_EXHAUSTED = False
+    brain.cli_complete = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("usage limit reached"))
+    brain.codex_complete = lambda *a, **kw: (
+        '{"market_view":"ok","lesson":"","watchlist":[],"decisions":[]}',
+        {"input": 10, "output": 5})
+    try:
+        out = brain._local_decide("system", "prompt")
+        assert out["brain"].endswith("(cli)") and out["brain"].startswith("codex"), out
+        assert brain._CLAUDE_QUOTA_EXHAUSTED, "한도 초과를 다음 사이클에 또 Claude로 보낸다"
+    finally:
+        C.BRAIN_BACKEND = old_backend
+        brain.cli_complete = old_claude
+        brain.codex_complete = old_codex
+        brain._CLAUDE_QUOTA_EXHAUSTED = old_quota
 
 
 def news_reports_dead_feeds_instead_of_going_quiet():
@@ -363,6 +541,8 @@ def start_button_cannot_turn_on_live_trading():
     assert args[1:3] == ["-m", "ai_trader.loop"], args
     if C.LIVE_TRADING and (C.have_broker_keys() or C.have_kiwoom_keys()):
         assert "--live" in args, f"실주문 허용인데 모의로 뜬다: {args}"
+    elif C.KIWOOM_MODE == "demo" and C.have_kiwoom_keys():
+        assert "--mock" in args and "--live" not in args, args
     else:
         assert "--live" not in args, f"실주문 차단인데 --live 가 붙었다: {args}"
         assert "--paper" in args, args
@@ -480,6 +660,10 @@ def market_gate_knows_when_it_is_guessing():
     assert data.session_now(datetime(2026, 9, 16, 11, 0, tzinfo=data.KST)), "정규장인데 닫혔다고 한다"
     assert not data.session_now(datetime(2026, 9, 16, 22, 0, tzinfo=data.KST)), "밤 10시에 장이 열렸다"
     assert not data.session_now(datetime(2026, 9, 16, 8, 30, tzinfo=data.KST)), "개장 전에 장이 열렸다"
+    assert data.us_session_now(datetime(2026, 9, 16, 10, 0, tzinfo=data.ET)), "미국 정규장이 닫혔다"
+    assert not data.us_session_now(datetime(2026, 9, 16, 16, 0, tzinfo=data.ET)), "미국 마감 뒤 장이 열렸다"
+    assert not data.us_session_now(datetime(2026, 9, 16, 15, 1, tzinfo=data.ET),
+                                   order_amount=True), "소수점 주문 마감 뒤 주문을 허용했다"
     assert data.trading_day_from({"result": {"isTradingDay": False}}) is False, "휴장일을 못 읽었다"
     assert data.trading_day_from({"isOpen": True}) is True
     # 모르는 응답 형태를 '열림'으로 때려맞히면 휴장일에 주문이 나간다
@@ -490,8 +674,12 @@ def paper_never_trades_on_real_orders():
     synthetic = data.make_feed(paper=True)
     assert synthetic.source == "synthetic" and synthetic.is_open(), "기본 모의는 시뮬레이터여야 한다"
     sim = data.make_feed(paper=True, live_data=True)
-    want = "toss" if C.have_broker_keys() else "synthetic"
-    assert sim.source == want, f"모의투자 피드가 {sim.source} (기대: {want})"
+    if C.have_kiwoom_keys():
+        assert sim.source.startswith("routed:KR=키움"), f"키움 시세가 안 잡혔다: {sim.source}"
+        assert ("US=토스" in sim.source) == C.have_broker_keys(), sim.source
+    else:
+        want = "toss" if C.have_broker_keys() else "synthetic"
+        assert sim.source == want, f"모의투자 피드가 {sim.source} (기대: {want})"
     assert bk.make_broker(paper=True).mode == "paper", "모의투자가 실계좌 브로커를 잡았다"
 
 
@@ -499,7 +687,10 @@ CHECKS = [
     ("6:4 슬리브 현금은 섞이지 않는다", sleeves_are_separate),
     ("한 종목 20% 상한이 지켜진다", position_cap_holds),
     ("슬리브 현금을 넘겨 못 산다", cannot_spend_more_than_sleeve_cash),
+    ("국내·해외 자본은 각각 50%를 못 넘는다", market_cap_is_half_each),
     ("사고·팔고·재매수가 자유롭다", buy_sell_rebuy_is_free),
+    ("해외는 소수점 주식이 산다", fractional_shares_survive_the_round_trip),
+    ("소수점 매수는 금액으로 나간다", fractional_buy_goes_out_as_amount),
     ("일일 손실 킬스위치가 랩을 세운다", kill_switch_halts_trading),
     ("집행 불가능한 판단은 걸러진다", validate_rejects_impossible_orders),
     ("관측 팩에 매매 신호가 없다", observations_carry_no_signal),
@@ -514,6 +705,8 @@ CHECKS = [
     ("이식한 지표 계산이 안 깨졌다", ported_indicators_still_compute_correctly),
     ("퀀트는 측정만 하고 판단 안 한다", quant_measures_but_never_decides),
     ("키움이 잘못된 주문을 먼저 막는다", kiwoom_rejects_bad_orders_before_sending),
+    ("계좌 화면이 숫자를 안 지어낸다", account_screen_never_invents_numbers),
+    ("키움 유량 제한을 안 태운다", kiwoom_does_not_burn_its_rate_limit),
     ("국내는 키움·해외는 토스로 갈린다", orders_route_by_market),
     ("죽은 뉴스 피드를 조용히 안 넘긴다", news_reports_dead_feeds_instead_of_going_quiet),
     ("시작 버튼이 실주문을 못 켠다", start_button_cannot_turn_on_live_trading),
@@ -522,13 +715,14 @@ CHECKS = [
     ("섹터는 사람이 안 넣는다", sector_comes_from_data_not_from_a_human),
     (".env 키가 실제로 읽힌다", env_file_actually_reaches_config),
     ("LLM 키 없어도 규칙으로 매매한다", no_llm_key_still_trades_on_rules),
+    ("Claude 한도 초과 시 Codex가 이어받는다", claude_limit_falls_back_to_codex),
     ("장 마감 판정이 추측을 안 한다", market_gate_knows_when_it_is_guessing),
     ("모의투자는 실주문을 안 낸다", paper_never_trades_on_real_orders),
 ]
 
 
 def main() -> int:
-    print(f"[selfcheck] brain={'claude' if C.have_brain_key() else 'offline-stub'} "
+    print(f"[selfcheck] brain={C.brain_backend()} "
           f"broker={'toss' if C.have_broker_keys() else 'paper'}")
     failed = sum(0 if check(n, f) else 1 for n, f in CHECKS)
     print(f"[selfcheck] {len(CHECKS) - failed}/{len(CHECKS)} 통과")

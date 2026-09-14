@@ -20,15 +20,28 @@ def _env() -> list[tuple[str, str, str]]:
 
 
 def _brain() -> list[tuple[str, str, str]]:
-    if not C.have_brain_key():
-        return [(WARN, "판단 엔진", "ANTHROPIC_API_KEY 없음 → 퀀트 점수로 매매한다 "
-                                   f"(매수 {C.QUANT_BUY_ABOVE:.0f} / 매도 {C.QUANT_SELL_BELOW:.0f})")]
+    backend = C.brain_backend()
+    if backend == "cli":
+        fallback = " → Codex CLI 자동 전환" if C.have_codex() else ""
+        return [(OK, "판단 엔진", f"{C.BRAIN_MODEL} · Claude CLI{fallback} (API 키 불필요)")]
+    if backend == "codex":
+        return [(OK, "판단 엔진", f"{C.CODEX_MODEL or 'Codex 설정 모델'} · Codex CLI")]
+    if backend == "none":
+        requested = f"AI_TRADER_BRAIN={C.BRAIN_BACKEND} · " if C.BRAIN_BACKEND != "auto" else ""
+        return [(WARN, "판단 엔진", requested + "LLM 없음 → 퀀트 점수로 매매한다 "
+                f"(매수 {C.QUANT_BUY_ABOVE:.0f} / 매도 {C.QUANT_SELL_BELOW:.0f})")]
     try:
         import anthropic  # noqa: F401
     except ImportError:
         return [(NO, "판단 엔진", "ANTHROPIC_API_KEY 는 있는데 anthropic 미설치 "
                                   "— pip3 install --user anthropic")]
     return [(OK, "판단 엔진", f"{C.BRAIN_MODEL}")]
+
+
+def _dart() -> list[tuple[str, str, str]]:
+    if C.DART_API_KEY:
+        return [(OK, "DART 재무제표", "키 있음 · 상세실적에서 처음 열 때 실제 연결 확인")]
+    return [(WARN, "DART 재무제표", "DART_API_KEY 없음 · 국내 종목 상세실적만 비활성")]
 
 
 def _venue(market: str) -> list[tuple[str, str, str]]:
@@ -92,15 +105,21 @@ def _data() -> list[tuple[str, str, str]]:
 
 
 def describe() -> list[tuple[str, str, str]]:
-    rows = _env() + _brain() + _feed()
+    rows = _env() + _brain() + _dart() + _feed()
     for market in C.MARKETS:
         rows += _venue(market)
     return rows + _data()
 
 
 ENV_TEMPLATE = """\
-# --- 판단 엔진 (없으면 퀀트 점수로 매매한다) ---
+# --- 판단 엔진: auto(기본) | api | cli | codex | off ---
+# auto는 API → Claude CLI → Codex CLI 순서이며 Claude 한도가 끝나면 Codex로 넘어간다.
 ANTHROPIC_API_KEY=
+AI_TRADER_BRAIN=auto
+AI_TRADER_MODEL=claude-opus-5
+AI_TRADER_RESEARCH_MODEL=claude-opus-5
+AI_TRADER_CODEX_MODEL=
+AI_TRADER_BRAIN_TIMEOUT=240
 
 # --- 토스증권 Open API (해외 주문 + 국내·해외 시세) ---
 # WTS 로그인 > 설정 > Open API 에서 발급. 같은 화면의 '허용 IP 관리'에 이 PC 의 IP 도 등록해야 한다.
@@ -108,6 +127,9 @@ TOSS_CLIENT_ID=
 TOSS_CLIENT_SECRET=
 # 비워두면 GET /api/v1/accounts 로 알아서 찾는다. 계좌가 여럿이면 쓸 accountSeq 를 적어라.
 TOSS_ACCOUNT=
+
+# --- DART 전자공시 (국내 종목 상세실적) ---
+DART_API_KEY=
 
 # --- 키움증권 REST (국내 주문 + 국내 시세) ---
 # demo = mockapi.kiwoom.com (모의투자, 돈 안 걸림) / real = api.kiwoom.com

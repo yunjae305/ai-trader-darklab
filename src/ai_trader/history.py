@@ -83,6 +83,48 @@ class SymbolView:
 
 
 @dataclass
+class StoredDailyFeed:
+    """장 마감 뒤 대시보드용 최신 일봉. 필요한 종목만 parquet에서 읽는다."""
+    series: dict[str, list[dict]]
+    source: str = "history:latest"
+
+    @classmethod
+    def build(cls, symbols: list[str]) -> "StoredDailyFeed":
+        candidates = []
+        for s in symbols:
+            candidates.extend([s, f"{s}.KS", f"{s}.KQ"])
+        df = pd.read_parquet(DATA / "bars_1d.parquet",
+                             filters=[("ticker", "in", candidates)])
+        series = {}
+        for ticker, group in df.sort_values("ts").groupby("ticker", sort=False):
+            symbol = str(ticker).split(".")[0]
+            series.setdefault(symbol, [{"date": str(r.ts)[:10], "open": float(r.open),
+                                        "high": float(r.high), "low": float(r.low),
+                                        "close": float(r.close), "volume": float(r.volume or 0)}
+                                       for r in group.itertuples()])
+        return cls(series)
+
+    def candles(self, symbol: str, n: int = 60) -> list[dict]:
+        return self.series.get(symbol, [])[-n:]
+
+    def price(self, symbol: str) -> float:
+        rows = self.candles(symbol, 1)
+        return rows[-1]["close"] if rows else 0.0
+
+    def prices(self, symbols: list[str]) -> dict[str, float]:
+        return {s: self.price(s) for s in symbols}
+
+    def advance(self) -> bool:
+        return False
+
+    def is_open(self, market: str | None = None) -> bool:
+        return False
+
+    def is_open_for(self, symbol: str) -> bool:
+        return False
+
+
+@dataclass
 class HistoryFeed:
     """시계 하나를 앞으로 밀면 네 타임프레임이 함께 따라온다."""
     frames: dict[str, pd.DataFrame]

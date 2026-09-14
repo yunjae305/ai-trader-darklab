@@ -148,7 +148,10 @@ def run(days: int = 30, policy_text: str | None = None, paper: bool = True,
 
 
 def brain_decide(snapshot, observations, policy_text):
-    return brain.decide(snapshot, observations, history=None, policy_text=policy_text)
+    # Claude CLI 는 호출당 컨텍스트 비용이 커서 일별 재생에 쓰지 않는다.
+    # API 를 명시한 경우는 기존처럼 LLM을, CLI 만 있는 경우는 퀀트 대역을 쓴다.
+    return brain.decide(snapshot, observations, history=None, policy_text=policy_text,
+                        allow_cli=False)
 
 
 def main(argv: list[str] | None = None) -> int:
