@@ -873,7 +873,22 @@ CHECKS = [
 def main() -> int:
     print(f"[selfcheck] brain={C.brain_backend()} "
           f"broker={'toss' if C.have_broker_keys() else 'paper'}")
-    failed = sum(0 if check(n, f) else 1 for n, f in CHECKS)
+    # 점검은 가짜 손절과 가짜 킬스위치를 일부러 일으킨다. 그게 실제 연구 기록에 남거나
+    # 텔레그램으로 나가면, 그 다음부터 무엇이 진짜 매매였는지 구분할 수 없다.
+    # 기록은 랩의 유일한 증인이다 — 점검이 증인을 오염시키면 안 된다.
+    saved_research, saved_token = C.RESEARCH, C.TELEGRAM_TOKEN
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            C.RESEARCH = Path(tmp)
+            C.TELEGRAM_TOKEN = ""       # 점검 중에는 알림을 보내지 않는다
+            # 쓰기는 격리하되, 읽기 전용 참조 문서는 따라와야 한다.
+            doc = saved_research / "toss_openapi_reference.md"
+            if doc.exists():
+                (C.RESEARCH / doc.name).write_text(doc.read_text(encoding="utf-8"),
+                                                   encoding="utf-8")
+            failed = sum(0 if check(n, f) else 1 for n, f in CHECKS)
+    finally:
+        C.RESEARCH, C.TELEGRAM_TOKEN = saved_research, saved_token
     print(f"[selfcheck] {len(CHECKS) - failed}/{len(CHECKS)} 통과")
     return 1 if failed else 0
 
