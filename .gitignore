@@ -30,3 +30,4 @@ research/*.md
 # 엔진 프로세스 상태·로그
 lab/engine.json
 lab/engine.log
+lab/telegramctl.log

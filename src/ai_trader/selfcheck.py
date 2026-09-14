@@ -351,6 +351,32 @@ def kiwoom_rejects_bad_orders_before_sending():
     assert C.have_kiwoom_keys() or C.have_broker_keys(), "키도 없이 실계좌 브로커가 만들어졌다"
 
 
+def telegram_commands_cannot_place_orders():
+    """텔레그램으로 받을 수 있는 것은 조회와 '멈추기'뿐이다.
+
+    봇 토큰은 언제든 샐 수 있다. 매수·매도 명령을 받게 만들면 그 토큰이 계좌를 여는
+    열쇠가 된다. 켜는 명령도 없다 — 멈추는 것은 안전한 방향이지만 켜는 것은 아니다.
+    그리고 발신자가 내가 아니면 아무 일도 일어나지 않아야 한다.
+    """
+    from . import telegramctl as TC
+
+    allowed = {"/status", "/positions", "/orders", "/stop", "/help", "/start"}
+    assert set(TC.COMMANDS) == allowed, f"명령이 늘었다: {set(TC.COMMANDS) ^ allowed}"
+    for word in ("/buy", "/sell", "/order", "/live", "/flat"):
+        assert TC.handle(word) is None, f"{word} 에 반응한다"
+
+    src = Path(TC.__file__).read_text(encoding="utf-8")
+    body = src.split('"""', 2)[2]          # 모듈 독스트링은 빼고 코드만 본다
+    for banned in (".buy(", ".sell(", ".order(", "make_broker", "AI_TRADER_LIVE",
+                   "engine.start", "E.start"):
+        assert banned not in body, f"명령 모듈이 주문/실행을 건드린다: {banned}"
+    # 켜는 것은 화면에서만 한다. stop 은 있고 start 는 없어야 한다.
+    assert "E.stop()" in body and "def cmd_stop" in body, "정지 명령이 사라졌다"
+
+    # 발신자 확인이 살아 있어야 한다 — 이게 빠지면 아무나 /stop 을 누를 수 있다.
+    assert "C.TELEGRAM_CHAT_ID" in body and "continue" in body, "발신자 확인이 없다"
+
+
 def ledger_survives_a_crash_mid_cycle():
     """체결은 났는데 장부에 안 남는 구간이 없어야 한다.
 
@@ -822,6 +848,7 @@ CHECKS = [
     ("매매 기록에 구멍이 없다", every_trade_is_fully_recorded),
     ("알림은 보내기만 한다", telegram_notifies_but_never_orders),
     ("체결이 장부에서 사라지지 않는다", ledger_survives_a_crash_mid_cycle),
+    ("텔레그램 명령은 주문을 못 낸다", telegram_commands_cannot_place_orders),
     ("키움 유량 제한을 안 태운다", kiwoom_does_not_burn_its_rate_limit),
     ("국내는 키움·해외는 토스로 갈린다", orders_route_by_market),
     ("죽은 뉴스 피드를 조용히 안 넘긴다", news_reports_dead_feeds_instead_of_going_quiet),
