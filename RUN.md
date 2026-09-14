@@ -13,14 +13,30 @@
 
 ---
 
-## 1. 서비스 켜기 (WSL 안, 보통은 이미 떠 있다)
+## 1. 서비스 — 켜는 명령은 없다
+
+봇과 대시보드는 **손으로 켜지 않는다.** systemd 가 알아서 띄우고, 죽으면 10초 뒤
+되살리고, 재시작해도 다시 뜬다. 연결은 세 군데에 걸려 있다.
+
+```
+Windows 예약 작업 'DarkLab WSL Autostart'   로그온하면 WSL 을 깨운다
+        ↓                                   (WSL 은 PC 부팅만으로는 안 뜬다)
+systemd + Linger=yes                        로그인 없이도 user manager 가 뜬다
+        ↓
+default.target.wants/                       두 서비스가 여기 걸려 있다
+```
+
+확인만 하려면:
 
 ```bash
-systemctl --user start darklab-bot darklab-dash
 systemctl --user status darklab-bot darklab-dash --no-pager
 ```
 
-둘 다 `active (running)` 이면 된다.
+둘 다 `active (running)` 이면 된다. 안 떠 있을 때만:
+
+```bash
+systemctl --user start darklab-bot darklab-dash
+```
 
 코드를 고친 뒤에는 다시 띄워야 반영된다:
 
