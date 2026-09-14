@@ -2,6 +2,9 @@
 __pycache__/
 .env
 .env.local
+# 손으로 고치기 전에 뜨는 백업. 원본과 똑같이 키가 들어 있다.
+.env.bak*
+.env.*.bak
 
 # 시세 원본 (수십~수백 MB). download.py 로 언제든 다시 받는다.
 data/
@@ -15,12 +18,14 @@ data/
 lab/mlflow.db
 lab/mlartifacts/
 lab/paper_state.json
+lab/*.json.bak*
 lab/mock_state.json
 lab/kiwoom_day.json
 lab/policy_history/
 # 증권사 액세스 토큰. 계좌를 열 수 있는 자격증명이다 — 절대 커밋하지 않는다.
 lab/kiwoom_token.json
 research/*.jsonl
+research/*.jsonl.bak*
 research/*.md
 !research/toss_openapi_reference.md
 
