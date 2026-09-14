@@ -46,6 +46,32 @@ def held_correlation(broker, feed, symbols: list[str] | None = None) -> dict:
         return {"unavailable": f"{type(exc).__name__}: {exc}"}
 
 
+def _filled(fill: dict, symbol: str) -> dict:
+    """체결 기록. **요청한 것이 아니라 실제로 체결된 것**을 적는다.
+
+    brain 이 10주를 요청해도 브로커는 시장 단위에 맞춰 잘라내고, 전량 매도는 보유량까지만
+    나간다. 요청 수량만 남겨 두면 장부와 원장이 왜 다른지 나중에 설명할 수가 없다.
+
+    증권사 주문번호가 특히 중요하다. 그게 없으면 우리 기록 한 줄과 증권사 원장 한 줄을
+    맞춰 볼 방법이 없다 — 주문이 실제로 나갔는지를 영원히 확인 못 한다.
+    """
+    sent = fill.get("broker") or {}
+    out = {
+        "status": "FILLED",
+        "filled_qty": fill.get("qty"),                      # 실제 체결 수량
+        "fill_price": fill.get("price"),
+        "amount": fill.get("cost", fill.get("proceeds")),   # 수수료·세금 포함 금액
+        "realized_pnl": fill.get("realized_pnl"),
+        "order_no": sent.get("ord_no"),                     # 증권사 주문번호 — 원장 대조의 열쇠
+        "venue": sent.get("venue"),
+        "broker_response": sent or None,                    # 주문번호 필드명이 바뀌어도 원본은 남는다
+    }
+    if C.market_of(symbol) == "US":
+        # 환산율을 안 적으면 원화 금액을 나중에 재현할 수 없다.
+        out["usd_krw"] = C.USD_KRW
+    return out
+
+
 def enforce_stop_loss(broker, prices: dict[str, float]) -> list[dict]:
     """손절선을 넘긴 보유를 전량 정리한다. brain 에게 묻지 않는다 — 사람이 정한 경계다.
 
@@ -60,7 +86,7 @@ def enforce_stop_loss(broker, prices: dict[str, float]) -> list[dict]:
                "price": round(hit["price"], 1), "brain": "guardrail", "mode": broker.mode}
         try:
             fill = broker.sell(hit["symbol"], hit["qty"], hit["price"])
-            rec.update(status="FILLED", realized_pnl=fill.get("realized_pnl"))
+            rec.update(_filled(fill, hit["symbol"]))
         except bk.Rejected as exc:
             rec.update(status="REJECTED", reason_rejected=str(exc))
         except Exception as exc:
@@ -103,7 +129,7 @@ def cycle(broker, feed, mlf=None, step: int | None = None, with_news: bool = Tru
         try:
             fill = (broker.buy(sym, d["sleeve"], d["quantity"], price) if d["action"] == "BUY"
                     else broker.sell(sym, d["quantity"], price))
-            rec.update(status="FILLED", realized_pnl=fill.get("realized_pnl"))
+            rec.update(_filled(fill, sym))
         except bk.Rejected as exc:
             rec.update(status="REJECTED", reason_rejected=str(exc))
         except Exception as exc:  # 브로커가 예상 못 한 이유로 죽어도 랩은 계속 돈다

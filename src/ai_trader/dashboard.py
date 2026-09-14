@@ -194,6 +194,11 @@ def trades(limit: int = 120) -> list[dict]:
             "sleeve": r.get("sleeve"),
             "quantity": r.get("quantity"),
             "price": r.get("price"),
+            # 요청과 체결은 다를 수 있다. 주문번호는 증권사 원장과 맞춰 보는 유일한 열쇠다.
+            "filled_qty": r.get("filled_qty"),
+            "amount": r.get("amount"),
+            "order_no": r.get("order_no"),
+            "venue": r.get("venue"),
             "status": r.get("status"),
             "realized_pnl": r.get("realized_pnl"),
             "confidence": r.get("confidence"),

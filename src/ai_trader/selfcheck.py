@@ -351,6 +351,37 @@ def kiwoom_rejects_bad_orders_before_sending():
     assert C.have_kiwoom_keys() or C.have_broker_keys(), "키도 없이 실계좌 브로커가 만들어졌다"
 
 
+def every_trade_is_fully_recorded():
+    """한 번의 매매가 남기는 기록에 구멍이 없어야 한다.
+
+    한때 증권사 응답(fill['broker'])을 통째로 버렸다. 그러면 주문번호가 사라지고,
+    우리 장부 한 줄과 증권사 원장 한 줄을 맞춰 볼 방법이 영원히 없어진다 —
+    "주문이 진짜 나갔나"에 답할 수 없게 된다.
+
+    요청 수량도 체결 수량과 다를 수 있다. 브로커는 시장 단위에 맞춰 잘라내고,
+    전량 매도는 보유량까지만 나간다. 요청만 적으면 장부 차이를 설명할 수 없다.
+    """
+    kr = loop._filled({"side": "BUY", "qty": 7, "price": 70_000, "cost": 490_073,
+                       "broker": {"ord_no": "0001234", "venue": "키움증권(demo)",
+                                  "return_code": 0}}, "005930")
+    for field in ("status", "filled_qty", "fill_price", "amount", "order_no", "venue"):
+        assert kr.get(field) is not None, f"체결 기록에 {field} 가 없다: {kr}"
+    assert kr["order_no"] == "0001234", "증권사 주문번호를 버렸다"
+    assert kr["filled_qty"] == 7 and kr["amount"] == 490_073, kr
+    assert kr["broker_response"], "증권사 원본 응답을 안 남겼다"
+    assert "usd_krw" not in kr, "국내 거래에 환산율을 적었다"
+
+    us = loop._filled({"side": "SELL", "qty": 0.5, "price": 190.0, "proceeds": 127_800,
+                       "realized_pnl": -3_200, "broker": {"venue": "토스증권"}}, "AAPL")
+    assert us["usd_krw"] == C.USD_KRW, "해외 거래인데 환산율을 안 적었다"
+    assert us["amount"] == 127_800 and us["realized_pnl"] == -3_200, us
+
+    # 체결 경로가 _filled 를 실제로 쓰는가 — 옛날처럼 realized_pnl 만 적으면 안 된다.
+    src = (Path(__file__).parent / "loop.py").read_text(encoding="utf-8")
+    assert src.count("_filled(") >= 3, "체결 기록 경로가 _filled 를 안 쓰는 데가 있다"
+    assert 'status="FILLED"' not in src, "FILLED 를 _filled 밖에서 직접 적는 곳이 남아 있다"
+
+
 def kiwoom_does_not_burn_its_rate_limit():
     """유량 제한에 걸리면 계좌·시세·주문이 한꺼번에 죽는다. 두 구멍을 막아 뒀다.
 
@@ -706,6 +737,7 @@ CHECKS = [
     ("퀀트는 측정만 하고 판단 안 한다", quant_measures_but_never_decides),
     ("키움이 잘못된 주문을 먼저 막는다", kiwoom_rejects_bad_orders_before_sending),
     ("계좌 화면이 숫자를 안 지어낸다", account_screen_never_invents_numbers),
+    ("매매 기록에 구멍이 없다", every_trade_is_fully_recorded),
     ("키움 유량 제한을 안 태운다", kiwoom_does_not_burn_its_rate_limit),
     ("국내는 키움·해외는 토스로 갈린다", orders_route_by_market),
     ("죽은 뉴스 피드를 조용히 안 넘긴다", news_reports_dead_feeds_instead_of_going_quiet),

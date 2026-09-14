@@ -609,8 +609,12 @@ function renderPortfolio(p, t, acct, ord) {
         <div><span class="nm" style="font-size:16px">${esc(r.name)}</span>
           <span class="st st-${esc(r.status)}">${esc(r.status)}</span>
           ${r.forced ? '<span class="st st-REJECTED">손절</span>' : ''}</div>
-        <div class="why mono">${r.quantity}주 @ ${num(r.price)}${
+        <div class="why mono">${num(r.filled_qty ?? r.quantity)}주 @ ${num(r.price)}${
+          r.filled_qty != null && r.filled_qty !== r.quantity ? ` <b class="neg">(요청 ${num(r.quantity)}주)</b>` : ''}${
+          r.amount != null ? ` · ${won(r.amount)}` : ''}${
           r.realized_pnl != null ? ` · 실현 <b class="${r.realized_pnl >= 0 ? 'pos' : 'neg'}">${won(r.realized_pnl)}</b>` : ''}</div>
+        ${r.order_no ? `<div class="why mono">주문번호 ${esc(r.order_no)}${
+          r.venue ? ' · ' + esc(r.venue) : ''}</div>` : ''}
         <div class="why">${esc(clip(r.rejected || r.reason || '', 120))}</div>
       </div></div>`).join('') : none('거래 기록이 없다 — 자동매매를 켜거나 Run 을 눌러라');
 
