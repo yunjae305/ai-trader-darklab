@@ -39,42 +39,42 @@ tail -f ~/ai_trader/lab/dashboard.log       # 대시보드
 
 ---
 
-## 2. 폰에서 보기 (Windows 쪽, WSL 재시작마다 다시)
+## 2. 폰에서 보기 (한 번만 해두면 끝)
 
-WSL2 는 NAT 라 폰에서 WSL 내부 IP 로 직접 못 온다. Windows 가 받아서 넘겨줘야 한다.
+WSL2 기본값(NAT)은 폰에서 WSL 내부 IP 로 못 온다. 그래서 **mirrored 모드**를 쓴다 —
+WSL 이 Windows 네트워크를 그대로 공유하므로 포트포워딩이 아예 필요 없고,
+WSL 이나 PC 를 재시작해도 그대로다.
 
-WSL 에서 현재 내부 IP 와 접속 주소를 확인:
+`C:\Users\<사용자>\.wslconfig`:
+
+```
+[wsl2]
+networkingMode=mirrored
+dnsTunneling=true
+autoProxy=true
+```
+
+방화벽 인바운드 허용 (PowerShell 관리자, **한 번만**):
+
+```powershell
+New-NetFirewallRule -DisplayName "DarkLab Dashboard" -Direction Inbound -LocalPort 8765 -Protocol TCP -Action Allow -Profile Private,Domain
+```
+
+적용: PowerShell 에서 `wsl --shutdown` 후 터미널 다시 열기.
+(Windows 11 22H2 이상 필요. 그 아래면 netsh portproxy 를 써야 하고, WSL 재시작마다 다시 걸어야 한다.)
+
+접속 주소:
 
 ```bash
-hostname -I | awk '{print $1}'                          # ← 아래 <WSL_IP> 에 넣는다
-grep AI_TRADER_DASH_TOKEN ~/ai_trader/.env | cut -d= -f2 # ← 접속 토큰
+grep AI_TRADER_DASH_TOKEN ~/ai_trader/.env | cut -d= -f2   # 토큰
 ```
 
-**PowerShell을 관리자로 열고**:
-
 ```powershell
-netsh interface portproxy reset
-netsh interface portproxy add v4tov4 listenport=8765 listenaddress=0.0.0.0 connectport=8765 connectaddress=<WSL_IP>
-New-NetFirewallRule -DisplayName "DarkLab Dashboard" -Direction Inbound -LocalPort 8765 -Protocol TCP -Action Allow
-```
-
-확인:
-
-```powershell
-netsh interface portproxy show v4tov4
 ipconfig | findstr IPv4        # 폰이 쓸 Windows IP
 ```
 
 폰에서 `http://<Windows_IP>:8765/?t=<토큰>`.
 집 밖에서도 보려면 Tailscale 켜고 `100.x.x.x` 주소로 같은 포트에 붙는다.
-
-**영구 해결**: `C:\Users\<사용자>\.wslconfig` 에 아래를 넣고 `wsl --shutdown`.
-그러면 WSL 이 Windows IP 를 그대로 써서 portproxy 자체가 필요 없어진다.
-
-```
-[wsl2]
-networkingMode=mirrored
-```
 
 ---
 
@@ -117,19 +117,21 @@ PYTHONPATH=src python3 -m ai_trader.selfcheck    # 돈이 걸린 경계들
 
 ## 5. 전부 새로 올리는 순서
 
+mirrored 를 한 번 설정해 뒀으면 PC 를 켤 때마다 봇과 대시보드는 저절로 뜬다.
+손으로 할 일은 없다. 확인만 하려면:
+
 ```bash
-# 1) WSL 안
-systemctl --user restart darklab-bot darklab-dash
-systemctl --user status  darklab-bot darklab-dash --no-pager
-hostname -I | awk '{print $1}'        # ← 이 IP 를 2번에 쓴다
-
-# 2) Windows PowerShell (관리자) — 2장의 명령
-
-# 3) 확인
+systemctl --user status darklab-bot darklab-dash --no-pager
 cd ~/ai_trader && PYTHONPATH=src python3 -m ai_trader.check
 ```
 
 그 다음 텔레그램에 `/status`, 대시보드 열고 **Run**.
+
+코드를 고쳤을 때만 다시 띄운다:
+
+```bash
+systemctl --user restart darklab-bot darklab-dash
+```
 
 ---
 
