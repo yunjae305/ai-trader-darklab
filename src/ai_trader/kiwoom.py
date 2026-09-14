@@ -10,6 +10,7 @@
   APP_KEY_MOCK / APP_SECRET_MOCK  (모의투자)
 """
 import gzip, hashlib, json, os, threading, time, urllib.error, urllib.request
+from datetime import datetime
 
 from . import config as C
 
@@ -179,8 +180,14 @@ class Kiwoom:
 
         base_dt 는 필수다. 빈 문자열을 보내면 원장이 1511(필수 입력 값 없음)로 거절한다 —
         키움 국내 시세가 통째로 죽으므로 기준일은 항상 채워 보낸다.
+
+        기준일은 서버 시계가 아니라 KST 로 잡는다. 국장의 '오늘'은 한국 날짜다 —
+        UTC 로 도는 서버(AWS 기본값)에서는 새벽에 전날을 보내게 되고, 그러면
+        그날 봉이 통째로 빠진다.
         """
-        r = self._post(CHART, {"stk_cd": symbol, "base_dt": time.strftime("%Y%m%d"),
+        from .data import KST
+        r = self._post(CHART, {"stk_cd": symbol,
+                               "base_dt": datetime.now(KST).strftime("%Y%m%d"),
                                "upd_stkpc_tp": "1"}, api_id="ka10081")
         rows = r.get("stk_dt_pole_chart_qry") or r.get("output") or []
         from .indicators import from_kiwoom
