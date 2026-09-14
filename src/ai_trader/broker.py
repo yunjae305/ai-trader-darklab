@@ -12,6 +12,7 @@ RoutedBroker  — 회계는 PaperBroker 그대로, 주문만 시장별 창구로
 from __future__ import annotations
 
 import json
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -122,16 +123,25 @@ class PaperBroker:
         return b
 
     def save(self, path=None) -> None:
+        """장부를 디스크에 남긴다. 쓰다가 죽어도 반쪽 파일이 남지 않게 바꿔 끼운다.
+
+        write_text 로 덮어쓰다 프로세스가 죽으면 JSON 이 잘린 채 남고, 다음 실행의
+        load() 가 거기서 터진다 — 현금도 보유도 통째로 사라진다. 임시 파일에 다 쓴 뒤
+        이름만 바꾸면 파일은 항상 '이전 것' 아니면 '새 것' 둘 중 하나다.
+        """
         path = path or C.STATE
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({
+        body = json.dumps({
             "cash": self.cash,
             "positions": {s: vars(p) for s, p in self.positions.items()},
             "realized": self.realized,
             "day": self.day,
             "day_start_equity": self.day_start_equity,
             "halted": self.halted,
-        }, ensure_ascii=False, indent=2))
+        }, ensure_ascii=False, indent=2)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(body, encoding="utf-8")
+        os.replace(tmp, path)
 
     # ---------- 조회 ----------
     def equity(self, prices: dict[str, float]) -> float:

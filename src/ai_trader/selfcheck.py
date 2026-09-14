@@ -351,6 +351,43 @@ def kiwoom_rejects_bad_orders_before_sending():
     assert C.have_kiwoom_keys() or C.have_broker_keys(), "키도 없이 실계좌 브로커가 만들어졌다"
 
 
+def ledger_survives_a_crash_mid_cycle():
+    """체결은 났는데 장부에 안 남는 구간이 없어야 한다.
+
+    사이클 끝에 한 번만 저장하면 체결과 저장 사이에 관측(20초)·판단(25초)·다음 주문이
+    다 들어간다. 그 1분 사이에 프로세스가 죽으면 증권사에는 체결이 남고 우리 장부에는
+    안 남는다 — 이미 쓴 현금을 남아 있다고 여기게 되고, 그 다음부터 20% 상한도
+    손절 -15% 도 전부 허구 위에서 계산된다.
+
+    저장 자체도 원자적이어야 한다. 덮어쓰다 죽어서 JSON 이 잘리면 다음 실행의 load()
+    가 거기서 터지고, 장부가 통째로 사라진다.
+    """
+    src = (Path(__file__).parent / "loop.py").read_text(encoding="utf-8")
+    body = src.split("def cycle(", 1)[1].split("\ndef ", 1)[0]
+    orders_block = body.split("for d in orders:", 1)[1]
+    assert "broker.save()" in orders_block.split("prices = feed.prices", 1)[0], \
+        "주문 루프 안에서 장부를 저장하지 않는다 — 체결과 저장 사이에 크래시 창이 열린다"
+    stop_block = src.split("def enforce_stop_loss(", 1)[1].split("\ndef ", 1)[0]
+    assert "broker.save()" in stop_block, "손절 체결 뒤 장부를 저장하지 않는다"
+
+    # 저장은 원자적이어야 한다 — 반쪽 파일이 남으면 load() 가 터진다.
+    bsrc = (Path(__file__).parent / "broker.py").read_text(encoding="utf-8")
+    save_block = bsrc.split("def save(", 1)[1].split("\n    # ---------- 조회", 1)[0]
+    assert "os.replace" in save_block, "장부를 제자리에서 덮어쓴다 — 쓰다 죽으면 잘린다"
+
+    # 실제로 저장하고 다시 읽었을 때 보유·현금·실현손익이 그대로 돌아와야 한다.
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "state.json"
+        b = bk.PaperBroker.fresh(1_000_000)
+        b.buy("005930", "STABLE", 1, 70_000)      # 20% 상한 안에 들어가는 수량
+        b.save(path)
+        assert not list(Path(tmp).glob("*.tmp")), "임시 파일이 남았다"
+        back = bk.PaperBroker.load(path)
+        assert back.positions["005930"].qty == 1, back.positions
+        assert round(back.cash["STABLE"]) == round(b.cash["STABLE"]), (back.cash, b.cash)
+        assert back.realized == b.realized
+
+
 def telegram_notifies_but_never_orders():
     """알림은 관찰 장치다 — 랩의 일부가 아니다.
 
@@ -784,6 +821,7 @@ CHECKS = [
     ("계좌 화면이 숫자를 안 지어낸다", account_screen_never_invents_numbers),
     ("매매 기록에 구멍이 없다", every_trade_is_fully_recorded),
     ("알림은 보내기만 한다", telegram_notifies_but_never_orders),
+    ("체결이 장부에서 사라지지 않는다", ledger_survives_a_crash_mid_cycle),
     ("키움 유량 제한을 안 태운다", kiwoom_does_not_burn_its_rate_limit),
     ("국내는 키움·해외는 토스로 갈린다", orders_route_by_market),
     ("죽은 뉴스 피드를 조용히 안 넘긴다", news_reports_dead_feeds_instead_of_going_quiet),

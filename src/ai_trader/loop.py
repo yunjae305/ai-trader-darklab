@@ -94,6 +94,7 @@ def enforce_stop_loss(broker, prices: dict[str, float]) -> list[dict]:
         journal.jot("incidents", {"kind": "stop_loss", "symbol": hit["symbol"],
                                   "pnl_pct": hit["pnl_pct"], "status": rec["status"]})
         out.append(journal.jot("decisions", rec))
+        broker.save()   # 체결 직후에 남긴다 — 여기서 죽으면 판 사실이 사라진다
     return out
 
 
@@ -137,6 +138,11 @@ def cycle(broker, feed, mlf=None, step: int | None = None, with_news: bool = Tru
             journal.jot("incidents", {"kind": "order_error", "symbol": sym,
                                       "trace": traceback.format_exc()[-800:]})
         results.append(journal.jot("decisions", rec))
+        # 주문 하나마다 장부를 남긴다. 사이클 끝에 한 번만 저장하면, 체결과 저장 사이에
+        # 관측·판단·다음 주문이 다 들어가서 1분 넘는 구간이 생긴다. 그 사이에 프로세스가
+        # 죽으면 증권사에는 체결이 남고 우리 장부에는 안 남는다 — 그 다음부터 모든
+        # 숫자가 거짓말이 된다(이미 쓴 현금을 남아 있다고 여긴다).
+        broker.save()
 
     prices = feed.prices(active)
     after = broker.snapshot(prices)
