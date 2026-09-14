@@ -362,6 +362,12 @@ def telegram_commands_cannot_place_orders():
 
     allowed = {"/status", "/positions", "/orders", "/stop", "/help", "/start"}
     assert set(TC.COMMANDS) == allowed, f"명령이 늘었다: {set(TC.COMMANDS) ^ allowed}"
+
+    # '/' 를 쳤을 때 뜨는 목록과 실제로 먹는 명령이 어긋나면 안 된다.
+    # 메뉴에 있는데 안 먹으면 거짓말이고, 먹는데 메뉴에 없으면 외워야 한다.
+    menu = {"/" + name for name in TC.COMMAND_HELP}
+    assert menu <= allowed, f"메뉴에 없는 명령이 있다: {menu - allowed}"
+    assert allowed - menu == {"/start"}, f"메뉴에서 빠진 명령: {allowed - menu - {'/start'}}"
     for word in ("/buy", "/sell", "/order", "/live", "/flat"):
         assert TC.handle(word) is None, f"{word} 에 반응한다"
 

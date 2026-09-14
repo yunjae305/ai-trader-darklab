@@ -116,6 +116,28 @@ COMMANDS = {
     "/start": lambda: HELP,     # 텔레그램이 첫 대화에서 보내는 인사. 매매 시작이 아니다.
 }
 
+# 입력창에 '/' 만 쳐도 텔레그램이 띄워 주는 목록. 외워서 칠 필요가 없어진다.
+# /start 는 넣지 않는다 — 첫 대화에서 자동으로 한 번 오는 인사라 메뉴에 있으면
+# '매매 시작'으로 읽힌다. 실제로는 도움말만 띄운다.
+COMMAND_HELP = {
+    "status": "계좌·엔진 상태",
+    "positions": "보유 종목",
+    "orders": "오늘 주문 (증권사 원장)",
+    "stop": "매매 루프 정지",
+    "help": "명령 목록",
+}
+
+
+def register_commands() -> bool:
+    """봇의 명령 메뉴를 텔레그램에 등록한다. 한 번 등록하면 봇 계정에 남는다."""
+    try:
+        out = T._call("setMyCommands", {"commands": [
+            {"command": name, "description": desc}
+            for name, desc in COMMAND_HELP.items()]})
+        return bool(out.get("ok"))
+    except Exception:
+        return False     # 메뉴가 없어도 명령 자체는 그대로 먹는다
+
 
 def handle(text: str) -> str | None:
     """명령 한 줄 → 답할 말. 모르는 말에는 답하지 않는다."""
@@ -144,7 +166,9 @@ def serve() -> int:
             offset = updates[-1]["update_id"] + 1
     except Exception as exc:
         print(f"[telegramctl] 시작 조회 실패 — 계속 간다: {exc}")
-    print(f"[telegramctl] 명령 대기 중 (chat_id={C.TELEGRAM_CHAT_ID})")
+    menu = register_commands()      # '/' 만 쳐도 목록이 뜨게
+    print(f"[telegramctl] 명령 대기 중 (chat_id={C.TELEGRAM_CHAT_ID}) "
+          f"메뉴={'등록됨' if menu else '등록 실패 — 명령은 그대로 먹는다'}")
     T.send("▶️ 봇 명령 대기 시작\n\n" + HELP)
 
     while True:
@@ -172,10 +196,16 @@ def main(argv=None) -> int:
                                  description="텔레그램 명령 수신 (조회 + 정지만)")
     ap.add_argument("--once", metavar="COMMAND",
                     help="명령 하나만 실행해 보고 끝낸다 (예: --once /status)")
+    ap.add_argument("--register", action="store_true",
+                    help="명령 메뉴만 등록하고 끝낸다 ('/' 입력 시 목록)")
     args = ap.parse_args(argv)
     if args.once:
         print(handle(args.once) or "모르는 명령이다")
         return 0
+    if args.register:
+        ok = register_commands()
+        print("[telegramctl] 메뉴 등록됨" if ok else "[telegramctl] 등록 실패")
+        return 0 if ok else 1
     try:
         return serve()
     except KeyboardInterrupt:
