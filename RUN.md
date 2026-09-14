@@ -19,12 +19,19 @@
 되살리고, 재시작해도 다시 뜬다. 연결은 세 군데에 걸려 있다.
 
 ```
-Windows 예약 작업 'DarkLab WSL Autostart'   로그온하면 WSL 을 깨운다
-        ↓                                   (WSL 은 PC 부팅만으로는 안 뜬다)
+Windows 예약 작업 'DarkLab WSL Autostart'   로그온하면 wscript 로 숨은 창 없이
+        ↓                                   darklab-wsl-keepalive.vbs 를 띄운다
+wsl.exe --exec sleep infinity               붙어 있는 WSL 세션을 하나 잡아 둔다
+        ↓                                   (이게 없으면 WSL 이 배포판을 내린다)
 systemd + Linger=yes                        로그인 없이도 user manager 가 뜬다
         ↓
 default.target.wants/                       두 서비스가 여기 걸려 있다
 ```
+
+가운데 칸이 핵심이다. `wsl.exe` 클라이언트가 **하나도 안 남으면** WSL 은 30초쯤 뒤
+배포판을 통째로 내린다 — 서비스가 멀쩡히 돌고 있어도 같이 죽는다. `Linger=yes` 는
+리눅스 *안에서* 로그아웃해도 user manager 를 유지하는 설정일 뿐, WSL 이 VM 을
+내리는 것은 막지 못한다. 그래서 `sleep infinity` 로 세션 하나를 붙잡아 둔다.
 
 확인만 하려면:
 
@@ -51,7 +58,12 @@ tail -f ~/ai_trader/lab/telegramctl.log     # 봇
 tail -f ~/ai_trader/lab/dashboard.log       # 대시보드
 ```
 
-`Linger=yes` 라 WSL 재시작에도 자동으로 뜬다. 확인: `loginctl show-user $USER -p Linger`
+자동으로 떴는지 확인하는 두 줄 (둘 다 나와야 한다):
+
+```bash
+loginctl show-user $USER -p Linger      # Linger=yes
+pgrep -af 'sleep infinity'              # keepalive 세션
+```
 
 ---
 
@@ -159,5 +171,6 @@ systemctl --user restart darklab-bot darklab-dash
 | 대시보드 안 열림 | `systemctl --user status darklab-dash` / `curl -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:8765/?t=<토큰>"` |
 | 폰에서만 안 됨 | portproxy 가 옛 WSL IP 를 가리킨다 — 2번을 다시 |
 | 알림이 안 옴 | `python3 -m ai_trader.check` 의 `알림` 줄 |
+| 재부팅했더니 둘 다 안 떠 있음 | keepalive 가 안 붙었다 — `pgrep -af 'sleep infinity'` 가 비었으면 예약 작업 'DarkLab WSL Autostart' 의 마지막 결과를 본다 |
 | 키움 429 | 정상. 전송 계층이 물러섰다 다시 시도한다 |
 | 체결이 났는데 화면에 없음 | **주문 현황**(증권사 원장)과 **거래 기록**(우리 장부)을 대조 — 주문번호가 열쇠다 |
