@@ -31,3 +31,4 @@ research/*.md
 lab/engine.json
 lab/engine.log
 lab/telegramctl.log
+lab/dashboard.log
