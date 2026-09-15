@@ -198,15 +198,18 @@ class Kiwoom:
         """매수/매도 주문. price 를 주면 지정가, 생략하면 시장가."""
         trde_tp = trde_tp or ("0" if price is not None else "3")
         self._validate(symbol, quantity, price, trde_tp)
+        # 키움은 수량·가격을 정수 문자열로만 받는다. 판단 계층이 5.0 처럼 float 로
+        # 넘기면 "5.0" 이 되어 [1517] 입력 값 오류로 전량 거절된다. _validate 가
+        # 이미 정수임을 보장했으므로 여기서 int 로 떨어뜨리는 것이 안전하다.
         body = {"dmst_stex_tp": self.exchange, "stk_cd": symbol,
-                "ord_qty": str(quantity), "trde_tp": trde_tp,
-                "ord_uv": "" if price is None else str(price), "cond_uv": cond_uv}
+                "ord_qty": str(int(quantity)), "trde_tp": trde_tp,
+                "ord_uv": "" if price is None else str(int(price)), "cond_uv": cond_uv}
         return self._post(ORDR, body, api_id=BUY if side == "BUY" else SELL)
 
     def cancel(self, orig_ord_no, symbol, quantity=0):
         """취소주문 [kt10003]. quantity=0 이면 잔량 전부 취소."""
         return self._post(ORDR, {"dmst_stex_tp": self.exchange, "orig_ord_no": str(orig_ord_no),
-                                 "stk_cd": symbol, "cncl_qty": str(quantity)}, api_id=CANCEL)
+                                 "stk_cd": symbol, "cncl_qty": str(int(quantity))}, api_id=CANCEL)
 
     @staticmethod
     def _validate(symbol, quantity, price, trde_tp):
