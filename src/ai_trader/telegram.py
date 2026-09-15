@@ -82,7 +82,16 @@ def _decision_text(r: dict) -> str | None:
     if not mark:
         return None
     qty = r.get("filled_qty") if r.get("filled_qty") is not None else r.get("quantity")
-    lines = [f"{mark} <b>{r.get('action', '')} {r.get('symbol', '')}</b> {status}",
+    # 종목코드만 오면 폰에서 무엇을 샀는지 알 수 없다. data 를 함수 안에서 부르는 건
+    # journal → telegram 경로와 얽히지 않게 하려는 것이다.
+    sym = r.get("symbol") or ""
+    try:
+        from . import data
+        name = data.NAMES.get(sym, "")
+    except Exception:
+        name = ""
+    head = f"{r.get('action', '')} {sym}" + (f" {name}" if name else "")
+    lines = [f"{mark} <b>{head}</b> {status}",
              f"{qty}주 @ {_money(r.get('price'))}"]
     if r.get("amount") is not None:
         lines[-1] += f" · {_money(r['amount'])}원"
