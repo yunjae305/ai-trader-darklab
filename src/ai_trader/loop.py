@@ -277,6 +277,7 @@ def main(argv: list[str] | None = None) -> int:
                 time.sleep(C.CYCLE_SECONDS)   # 닫힌 장은 들여다볼 것이 없다
                 continue
             was_open = True
+            started = time.time()
             try:
                 out = cycle(broker, feed, mlf, step=step, with_news=not args.no_news)
                 journal.note("daily_log",
@@ -294,7 +295,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.once:
                 return 0
             # 다음 판단까지 자지 않고 본다. 사건이 나면 남은 시간을 버리고 바로 깨운다.
-            woke = watch(broker, feed, C.CYCLE_SECONDS)
+            # 사이클에 쓴 시간을 빼야 CYCLE_SECONDS 가 '주기'가 된다. 안 빼면 판단에
+            # 걸린 48초가 매번 더해져, 60초로 맞춰도 실제로는 108초마다 돈다.
+            woke = watch(broker, feed, max(0.0, C.CYCLE_SECONDS - (time.time() - started)))
             if woke:
                 print(f"[darklab] 감시 중 사건 — {woke} · 판단을 앞당긴다")
 
