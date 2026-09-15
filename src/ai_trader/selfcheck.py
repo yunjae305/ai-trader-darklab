@@ -800,6 +800,26 @@ def orders_route_by_market():
     assert d.cash == before and not d.positions, "막힌 주문이 장부를 바꿨다"
 
 
+def watch_wakes_on_events_not_on_the_clock():
+    """감시 루프는 사건이 나면 남은 시간을 버려야 한다. 안 그러면 손절이 15분 늦는다."""
+    from . import loop as _loop
+    class Pos:
+        def __init__(self, sym, avg):
+            self.symbol, self.qty, self.avg, self.sleeve = sym, 1.0, avg, "STABLE"
+    class B:
+        def __init__(self): self.positions = {"005930": Pos("005930", 100000.0)}
+        def check_kill_switch(self, p): return None
+        def stop_loss_breaches(self, p): return []
+        def save(self): pass
+    class F:
+        def __init__(self, px, open_=True): self.px, self._open = px, open_
+        def prices(self, syms): return {s: self.px for s in syms}
+        def is_open(self): return self._open
+    assert _loop.watch(B(), F(112000.0), 5).startswith("take_profit"), "익절 문턱을 못 본다"
+    assert _loop.watch(B(), F(100000.0, open_=False), 5) == "market_closed", "마감을 못 본다"
+    assert _loop.watch(B(), F(100000.0), 4) == "", "사건도 없는데 깨웠다"
+
+
 def market_gate_knows_when_it_is_guessing():
     from datetime import datetime
     assert data.session_now(datetime(2026, 9, 16, 11, 0, tzinfo=data.KST)), "정규장인데 닫혔다고 한다"

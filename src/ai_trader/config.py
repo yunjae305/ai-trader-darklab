@@ -117,6 +117,13 @@ BRAIN_CLI_TIMEOUT = int(os.getenv("AI_TRADER_BRAIN_TIMEOUT", "240"))
 BRAIN_QUOTA_COOLDOWN = int(os.getenv("AI_TRADER_QUOTA_COOLDOWN", "3600"))
 
 CYCLE_SECONDS = int(os.getenv("AI_TRADER_CYCLE_SECONDS", "900"))  # 15분
+# 사이클 사이를 자면서 보내지 않고 호가창을 들여다보는 주기. LLM 을 부르지 않으므로
+# 초 단위로 돌아도 비용이 0이다. 판단은 느리게, 반응은 빠르게 — 사람이 하는 방식이다.
+WATCH_SECONDS = int(os.getenv("AI_TRADER_WATCH_SECONDS", "3"))
+# 보유가 이만큼 움직이면 다음 사이클을 기다리지 않고 LLM 을 깨운다 (%).
+WATCH_JOLT_PCT = float(os.getenv("AI_TRADER_WATCH_JOLT_PCT", "3.0"))
+# 익절 문턱. 여기 닿으면 판단을 앞당긴다 — 파는 것은 brain 이 정한다.
+TAKE_PROFIT_PCT = float(os.getenv("AI_TRADER_TAKE_PROFIT", "10.0"))
 # mlflow 3.x 는 파일 스토어를 폐기했다 — 로컬 sqlite 가 기본.
 MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI") or f"sqlite:///{ROOT / 'lab' / 'mlflow.db'}"
 MLFLOW_EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT", "ai-trader-darklab")

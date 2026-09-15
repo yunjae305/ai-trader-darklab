@@ -101,6 +101,56 @@ def enforce_stop_loss(broker, prices: dict[str, float]) -> list[dict]:
     return out
 
 
+def watch(broker, feed, seconds: int) -> str:
+    """사이클 사이를 자지 않고 호가창을 본다. 사람이 화면 앞에 앉아 있는 자리다.
+
+    여기서는 LLM 을 부르지 않는다 — 그래서 3초마다 돌아도 비용이 0이고, 손절 반응이
+    다음 사이클(최대 15분)이 아니라 몇 초로 줄어든다. 판단이 필요한 사건을 만나면
+    남은 시간을 버리고 그 이유를 돌려준다. 무사히 다 기다렸으면 빈 문자열이다.
+
+    시세 조회가 실패해도 멈추지 않는다. 한 번 못 봤다고 장을 놓치는 것보다,
+    다음 3초에 다시 보는 편이 낫다.
+    """
+    deadline = time.time() + seconds
+    base: dict[str, float] = {}
+    while time.time() < deadline:
+        time.sleep(min(C.WATCH_SECONDS, max(0.0, deadline - time.time())))
+        held = [p.symbol for p in broker.positions.values()]
+        if not held:
+            continue                      # 들고 있는 게 없으면 볼 것도 없다
+        try:
+            prices = {s: v for s, v in feed.prices(held).items() if v > 0}
+        except Exception:
+            continue                      # 조회 실패는 사건이 아니다
+        if not prices:
+            continue
+        if not feed.is_open():
+            return "market_closed"
+
+        if broker.check_kill_switch(prices):
+            journal.jot("incidents", {"kind": "kill_switch", "detail": "감시 중 당일 손실 한도"})
+            return "kill_switch"
+        if enforce_stop_loss(broker, prices):
+            return "stop_loss"            # 현금이 생겼다 — 무엇을 할지는 brain 이 정한다
+
+        for pos in broker.positions.values():
+            now = prices.get(pos.symbol)
+            if not now:
+                continue
+            pnl = (now - pos.avg) / pos.avg * 100
+            if pnl >= C.TAKE_PROFIT_PCT:
+                journal.jot("incidents", {"kind": "take_profit_reached",
+                                          "symbol": pos.symbol, "pnl_pct": round(pnl, 2)})
+                return f"take_profit:{pos.symbol}"
+            first = base.setdefault(pos.symbol, now)
+            jolt = (now - first) / first * 100
+            if abs(jolt) >= C.WATCH_JOLT_PCT:
+                journal.jot("incidents", {"kind": "price_jolt", "symbol": pos.symbol,
+                                          "detail": f"감시 중 {jolt:+.2f}%"})
+                return f"jolt:{pos.symbol}"
+    return ""
+
+
 def cycle(broker, feed, mlf=None, step: int | None = None, with_news: bool = True) -> dict:
     """한 사이클: 관측 → 판단 → 집행 → 기록. 어떤 단계가 죽어도 랩은 다음 사이클로 간다."""
     active = [s for s in C.UNIVERSE if data.feed_open_for(feed, s)]
@@ -224,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
                 print("[darklab] 장 마감 — 사이클 건너뜀")
                 if args.once:
                     return 0
-                time.sleep(C.CYCLE_SECONDS)
+                time.sleep(C.CYCLE_SECONDS)   # 닫힌 장은 들여다볼 것이 없다
                 continue
             was_open = True
             try:
@@ -243,7 +293,10 @@ def main(argv: list[str] | None = None) -> int:
             step += 1
             if args.once:
                 return 0
-            time.sleep(C.CYCLE_SECONDS)
+            # 다음 판단까지 자지 않고 본다. 사건이 나면 남은 시간을 버리고 바로 깨운다.
+            woke = watch(broker, feed, C.CYCLE_SECONDS)
+            if woke:
+                print(f"[darklab] 감시 중 사건 — {woke} · 판단을 앞당긴다")
 
 
 if __name__ == "__main__":
