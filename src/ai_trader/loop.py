@@ -27,6 +27,9 @@ def recent_history(feed, limit: int = 12, symbols: list[str] | None = None) -> l
             "price_then": then, "price_now": round(now, 1),
             "move_since_pct": round((now - then) / then * 100, 2) if then else None,
             "executed": rec.get("status"),
+            # 거부 사유를 빼면 LLM 은 '왜 안 됐나'를 추측으로 메운다. 실제로
+            # 계좌 오류(RC5006)를 수량 문제로 오인해 네 사이클을 태웠다.
+            "rejected_reason": rec.get("reason_rejected"),
         })
     return out[-limit:]
 
