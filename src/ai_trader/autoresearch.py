@@ -119,7 +119,9 @@ def run(iters: int = 3, days: int = 30, metric: str = "risk_adjusted",
                             params={"days": days, "metric": metric, "source": source}) as mlf:
         base = backtest.run(days=days, policy_text=current, quiet=True, mlf=mlf, source=source)
     best = base[metric]
-    print(f"[autoresearch] baseline {metric}={best} (수익 {base['total_return_pct']}%)")
+    baseline_valid = bool(base.get("policy_used"))
+    print(f"[autoresearch] baseline {metric}={best} (수익 {base['total_return_pct']}%)"
+          + ("" if baseline_valid else "  — 경고: 기준선이 정책을 읽지 않았다, 승격 금지"))
     journal.jot("experiments", {"iter": -1, "verdict": "BASELINE", "score": best,
                                 "metrics": {k: base[k] for k in
                                             ("total_return_pct", "max_drawdown_pct", "trades")}})
@@ -142,7 +144,13 @@ def run(iters: int = 3, days: int = 30, metric: str = "risk_adjusted",
             rec["score"] = trial[metric]
             rec["metrics"] = {k: trial[k] for k in
                               ("total_return_pct", "max_drawdown_pct", "daily_vol_pct", "trades")}
-            if trial[metric] > best:
+            if not trial.get("policy_used"):
+                # 재생이 정책을 읽지 않았다. 점수가 올랐든 내렸든 이 후보에 대한 평가가
+                # 아니다 — REVERT 라고 적으면 '제안이 나빴다'는 거짓이 기록된다.
+                rec.update(verdict="NOT_EVALUATED", score=None,
+                           verdict_reason=f"재생이 정책을 읽지 않았다 (brain={trial.get('brain')}) "
+                                          "— 정책을 쓰는 백엔드로 평가해야 판정할 수 있다")
+            elif baseline_valid and trial[metric] > best:
                 shutil.copy(C.POLICY, history_dir / f"policy_{datetime.now():%Y%m%d_%H%M%S}_v{i}.md")
                 C.POLICY.write_text(candidate, encoding="utf-8")
                 current, best = candidate, trial[metric]

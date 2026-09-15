@@ -167,6 +167,13 @@ def cycle(broker, feed, mlf=None, step: int | None = None, with_news: bool = Tru
     # 손절은 brain 보다 먼저다. 경계는 판단을 기다리지 않는다.
     active_prices = {s: prices.get(s, 0) for s in active}
     results = enforce_stop_loss(broker, active_prices)
+    if results:
+        # 손절이 보유와 현금을 바꿨다. 위에서 뜬 스냅샷은 이제 거짓이다 — 그걸 그대로
+        # 넘기면 brain 은 방금 정리된 보유를 아직 있다고 보고 없는 것을 팔라고 하며,
+        # validate 도 팔아서 생긴 현금을 모른 채 한도를 계산한다. 다시 뜬다.
+        # 손절은 드물게 일어나므로 이 재조회 비용은 사이클마다 나가지 않는다.
+        snapshot = broker.snapshot(prices)
+        snapshot["diversification"] = held_correlation(broker, feed, active)
 
     observations = data.observe(feed, active, with_news=with_news)
     verdict = brain.decide(snapshot, observations, recent_history(feed, symbols=active))

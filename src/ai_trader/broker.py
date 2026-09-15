@@ -89,6 +89,8 @@ class PaperBroker:
     realized: dict[str, float] = field(default_factory=dict)
     day: str = ""
     day_start_equity: float = 0.0
+    # 기준자산을 '실계좌를 보고' 세운 거래일. 비어 있으면 아직 설정값으로만 세운 것이다.
+    baseline_day: str = ""
     halted: bool = False
     fills: list[dict] = field(default_factory=list)
 
@@ -118,6 +120,7 @@ class PaperBroker:
             realized=raw["realized"],
             day=raw["day"],
             day_start_equity=raw["day_start_equity"],
+            baseline_day=raw.get("baseline_day", ""),
             halted=raw.get("halted", False),
         )
         return b
@@ -137,6 +140,7 @@ class PaperBroker:
             "realized": self.realized,
             "day": self.day,
             "day_start_equity": self.day_start_equity,
+            "baseline_day": self.baseline_day,
             "halted": self.halted,
         }, ensure_ascii=False, indent=2)
         tmp = path.with_suffix(path.suffix + ".tmp")
@@ -194,6 +198,21 @@ class PaperBroker:
             return 0.0
         return (self.equity(prices) - self.day_start_equity) / self.day_start_equity * 100
 
+    def adopt_account_baseline(self, equity: float) -> bool:
+        """실계좌에서 알게 된 자산을 당일 기준자산으로 채택한다. 세웠으면 True.
+
+        fresh() 의 기준자산은 C.START_CASH 라는 설정값이고 실계좌와 무관하다 —
+        1,000 만으로 출발한 장부가 500 만 계좌를 처음 보면 거래 한 건 없이 당일
+        -50% 가 되어 킬스위치가 내려갔다. 반대로 같은 날 재시작이 기준을 다시
+        세우면 그날 쌓인 손실이 0 으로 지워진다. 그래서 '그날 한 번만' 세운다.
+        """
+        today = date.today().isoformat()
+        if self.day_start_equity > 0 and self.baseline_day == today:
+            return False
+        self.day_start_equity = equity
+        self.baseline_day = today
+        return True
+
     def roll_day(self, prices: dict[str, float], today: str | None = None) -> bool:
         """날짜가 바뀌면 당일 기준자산과 킬스위치를 리셋한다."""
         today = today or date.today().isoformat()
@@ -201,6 +220,7 @@ class PaperBroker:
             return False
         self.day = today
         self.day_start_equity = self.equity(prices)
+        self.baseline_day = ""      # 새 거래일의 기준은 다음 계좌 동기화가 다시 세운다
         self.halted = False
         return True
 
@@ -332,6 +352,18 @@ def _first_list(body, *keys) -> list:
             if inner:
                 return inner
     return []
+
+
+def _avail(node: dict) -> float:
+    """주문가능금액. 0 은 유효한 값이므로 예수금으로 대체하지 않는다.
+
+    `ord_alow_amt or entr` 는 숫자 0 을 falsy 로 먹어 예수금을 주문가능금액으로
+    승격시킨다 — 실제로 한 주도 못 사는 계좌를 살 수 있다고 본다. 문자열 '0' 일
+    때는 truthy 라서 통과하므로, 같은 계좌가 응답 표기에 따라 다르게 동작했다.
+    필드가 아예 없을 때만 예수금으로 물러난다.
+    """
+    v = node.get("ord_alow_amt")
+    return _num(v if v is not None and str(v).strip() != "" else node.get("entr"))
 
 
 class Venue:
@@ -551,7 +583,7 @@ class KiwoomVenue(Venue):
         from .kiwoom import balance_total
         bal = self.api.balance()
         dep = self.api.deposit()
-        cash = _num(dep.get("ord_alow_amt") or dep.get("entr"))
+        cash = _avail(dep)
         tot = balance_total(bal)
         # 추정예탁자산이 비면 예수금+평가금액으로 대신한다. 둘 다 없으면 지어내지 않는다.
         assets = tot["assets"] or ((cash + tot["eval_amount"])
@@ -564,7 +596,7 @@ class KiwoomVenue(Venue):
     def cash(self) -> float:
         dep = self.api.deposit()
         node = dep if isinstance(dep, dict) else {}
-        return _num(node.get("ord_alow_amt") or node.get("entr"))
+        return _avail(node)
 
     def send(self, symbol: str, side: str, qty: int, price: float) -> dict:
         if self.api.mode == "real" and not C.LIVE_TRADING:
@@ -644,8 +676,12 @@ class RoutedBroker(PaperBroker):
                          for m, c in cash_by_market.items())
         # 슬리브별 현금은 증권사가 모른다. 사람이 정한 6:4 비율로 나눈다.
         self.cash = {k: total_cash * w for k, w in C.SLEEVES.items()}
-        if self.day_start_equity <= 0:
-            self.day_start_equity = self.equity({s: p.avg for s, p in positions.items()})
+        # 기준자산은 '오늘 이 계좌가 시작한 자산'이다. fresh() 가 넣어 둔 C.START_CASH 는
+        # 실계좌와 아무 상관이 없는 설정값이다 — 1,000 만으로 출발한 장부가 500 만 계좌를
+        # 처음 보면 거래 한 건 없이 당일 -50% 가 되어 킬스위치가 내려갔다.
+        # 그래서 이 거래일에 아직 기준을 세운 적이 없으면 실제 자산으로 세운다.
+        # 같은 날 재시작은 already_started 가 막는다 — 누적 손실을 0 으로 지우지 않는다.
+        self.adopt_account_baseline(self.equity({s: p.avg for s, p in positions.items()}))
         return {"positions": len(positions), "cash": round(total_cash),
                 "by_market": {m: round(c, 2) for m, c in cash_by_market.items()},
                 "usd_krw": C.USD_KRW}
@@ -667,7 +703,8 @@ class RoutedBroker(PaperBroker):
             positions={s: Position(p.symbol, p.sleeve, p.qty, p.avg)
                        for s, p in self.positions.items()},
             realized=dict(self.realized), day=self.day,
-            day_start_equity=self.day_start_equity, halted=self.halted)
+            day_start_equity=self.day_start_equity, baseline_day=self.baseline_day,
+            halted=self.halted)
 
     def buy(self, symbol: str, sleeve: str, qty: float, price: float) -> dict:
         self.venue_for(symbol)               # 창구가 없으면 장부를 건드리기 전에 막는다
@@ -711,7 +748,8 @@ class HybridMockBroker(PaperBroker):
             positions={s: Position(p.symbol, p.sleeve, p.qty, p.avg)
                        for s, p in self.positions.items()},
             realized=dict(self.realized), day=self.day,
-            day_start_equity=self.day_start_equity, halted=self.halted)
+            day_start_equity=self.day_start_equity, baseline_day=self.baseline_day,
+            halted=self.halted)
 
     def buy(self, symbol: str, sleeve: str, qty: float, price: float) -> dict:
         self._probe().buy(symbol, sleeve, qty, price)

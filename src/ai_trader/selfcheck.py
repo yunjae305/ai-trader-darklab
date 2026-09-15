@@ -635,6 +635,105 @@ def no_llm_key_still_trades_on_rules():
     assert brain.decide(b.snapshot(prices), bare, allow_cli=False)["brain"] == "offline-stub"
 
 
+def zero_buying_power_is_not_replaced_by_deposit():
+    """주문가능금액 0 은 유효한 값이다. 예수금으로 대체하면 못 사는 계좌를 살 수 있다고 본다.
+
+    `ord_alow_amt or entr` 가 숫자 0 을 falsy 로 먹었다. 문자열 '0' 은 truthy 라서
+    통과했으므로 같은 계좌가 응답 표기에 따라 다르게 동작했다 — 둘 다 0 이어야 한다.
+    """
+    assert bk._avail({"ord_alow_amt": 0, "entr": 5_000_000}) == 0, "숫자 0 이 예수금으로 바뀐다"
+    assert bk._avail({"ord_alow_amt": "0", "entr": 5_000_000}) == 0, "문자열 0 이 예수금으로 바뀐다"
+    # 필드가 아예 없을 때만 예수금으로 물러난다.
+    assert bk._avail({"entr": 5_000_000}) == 5_000_000
+    assert bk._avail({"ord_alow_amt": "", "entr": 5_000_000}) == 5_000_000
+    assert bk._avail({"ord_alow_amt": 1_234_000, "entr": 5_000_000}) == 1_234_000
+
+
+def synced_account_does_not_invent_a_daily_loss():
+    """동기화로 처음 본 실제 자산을 당일 손실로 읽지 않는다.
+
+    fresh() 의 기준자산은 C.START_CASH 라는 설정값이고 실계좌와 무관하다. 1,000 만으로
+    출발한 장부가 500 만 계좌를 처음 보면 거래 한 건 없이 -50% 가 되어 킬스위치가
+    내려갔다. 반대로 같은 날 재시작이 누적 손실을 0 으로 지워서도 안 된다.
+    """
+    from datetime import date
+    b = bk.PaperBroker.fresh(10_000_000)
+    assert b.day_start_equity == 10_000_000 and b.baseline_day == ""
+
+    # 첫 동기화: 실제 자산 500 만이 그날의 기준이 된다.
+    b.cash = {k: 5_000_000 * w for k, w in C.SLEEVES.items()}
+    b.positions = {}
+    b.day = date.today().isoformat()
+    assert b.adopt_account_baseline(b.equity({})) is True, "첫 동기화가 기준을 안 세웠다"
+    assert b.day_start_equity == 5_000_000, b.day_start_equity
+    assert abs(b.day_return_pct({})) < 0.001, f"무거래인데 당일 {b.day_return_pct({})}%"
+
+    # 같은 날 재시작: 이미 그날 기준을 세웠으므로 손실을 지우지 않는다.
+    b.cash = {k: 4_650_000 * w for k, w in C.SLEEVES.items()}   # 하루 -7%
+    before = b.day_start_equity
+    assert b.adopt_account_baseline(b.equity({})) is False, "같은 날 기준을 다시 세웠다"
+    assert b.day_start_equity == before, "재시작이 기준자산을 다시 세워 손실을 지웠다"
+    assert b.day_return_pct({}) < -6.9, b.day_return_pct({})
+
+
+def policy_blind_replay_cannot_promote_a_policy():
+    """정책을 읽지 않은 재생은 그 정책에 대한 평가가 아니다.
+
+    allow_cli=False 인 과거 재생은 CLI/codex 백엔드를 퀀트 대역으로 바꾼다. 그러면
+    '절대 매수 금지'와 '항상 매수'가 같은 주문을 낸다 — 그 점수 비교로 KEEP/REVERT 를
+    적으면 읽지도 않은 글을 채점한 것이 기록으로 남는다.
+    """
+    obs = [{"symbol": "005930", "price": 1000,
+            "quant": {"score": 72.0, "reasons": ["테스트"], "parts": {}, "mode": "trend"}}]
+    b = bk.PaperBroker.fresh(10_000_000)
+    snap = b.snapshot({"005930": 1000})
+
+    old_backend = C.BRAIN_BACKEND
+    try:
+        C.BRAIN_BACKEND = "codex"
+        blind = brain.decide(snap, obs, policy_text="절대 매수 금지", allow_cli=False)
+        assert blind["policy_used"] is False, f"정책을 읽었다고 한다: {blind['brain']}"
+
+        # 상반된 정책이 같은 결과를 낸다는 것이 이 표시가 필요한 이유다.
+        other = brain.decide(snap, obs, policy_text="항상 전량 매수", allow_cli=False)
+        assert [d["action"] for d in blind["decisions"]] == \
+               [d["action"] for d in other["decisions"]], "정책이 실제로 반영됐다면 이 검사를 고쳐라"
+        assert other["policy_used"] is False
+    finally:
+        C.BRAIN_BACKEND = old_backend
+
+    # 퀀트 점수가 없으면 스텁이고, 그것도 정책을 읽지 않는다.
+    bare = [{k: v for k, v in o.items() if k != "quant"} for o in obs]
+    assert brain.decide(snap, bare, policy_text="무엇이든", allow_cli=False)["policy_used"] is False
+
+
+def stop_loss_refreshes_the_snapshot_it_hands_to_brain():
+    """손절 뒤 brain 에게 넘기는 스냅샷은 손절 뒤 장부여야 한다.
+
+    손절이 보유를 정리했는데 손절 전 스냅샷을 넘기면 brain 은 없는 보유를 아직 있다고
+    보고 그것을 팔라고 하며, validate 도 팔아서 생긴 현금을 모른 채 한도를 계산한다.
+    """
+    import inspect
+    src = inspect.getsource(loop.cycle)
+    sl = src.index("enforce_stop_loss(broker")
+    decide = src.index("brain.decide(")
+    between = src[sl:decide]
+    assert "broker.snapshot(" in between, \
+        "손절과 brain.decide 사이에 스냅샷 재생성이 없다 — 낡은 보유가 판단에 들어간다"
+
+    # 행동으로도 본다: 손절이 보유를 지우면 재생성된 스냅샷에 그 보유가 없어야 한다.
+    b = bk.PaperBroker.fresh(10_000_000)
+    b.buy("005930", "AGGRESSIVE", 7, 100_000)      # 슬리브 4,000,000 의 17.5% — 20% 상한 아래
+    crashed = {"005930": 80_000}                      # -20%, 손절 -15% 아래
+    assert b.positions, "매수가 안 됐다"
+    stale = b.snapshot(crashed)
+    loop.enforce_stop_loss(b, crashed)
+    assert not b.positions, "손절이 보유를 정리하지 않았다"
+    assert stale["positions"], "낡은 스냅샷에는 보유가 남아 있어야 이 검사가 의미 있다"
+    fresh_snap = b.snapshot(crashed)
+    assert not fresh_snap["positions"], "재생성한 스냅샷에 정리된 보유가 남아 있다"
+
+
 def cli_is_spawned_by_resolved_path():
     """CLI 를 이름만으로 띄우면 Windows 에서 실행만 조용히 죽는다.
 
@@ -943,6 +1042,10 @@ CHECKS = [
     ("섹터는 사람이 안 넣는다", sector_comes_from_data_not_from_a_human),
     (".env 키가 실제로 읽힌다", env_file_actually_reaches_config),
     ("LLM 키 없어도 규칙으로 매매한다", no_llm_key_still_trades_on_rules),
+    ("0 원 주문가능금액을 예수금으로 안 바꾼다", zero_buying_power_is_not_replaced_by_deposit),
+    ("동기화가 없는 당일 손실을 안 지어낸다", synced_account_does_not_invent_a_daily_loss),
+    ("정책을 안 읽은 재생은 정책을 승격 못 한다", policy_blind_replay_cannot_promote_a_policy),
+    ("손절 뒤 스냅샷을 다시 떠서 넘긴다", stop_loss_refreshes_the_snapshot_it_hands_to_brain),
     ("CLI 를 이름만으로 띄우지 않는다", cli_is_spawned_by_resolved_path),
     ("Claude 한도 초과 시 Codex가 이어받는다", claude_limit_falls_back_to_codex),
     ("장 마감 판정이 추측을 안 한다", market_gate_knows_when_it_is_guessing),

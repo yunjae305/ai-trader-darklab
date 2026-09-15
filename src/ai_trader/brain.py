@@ -386,9 +386,27 @@ def _local_decide(system: str, prompt: str) -> dict:
     return out
 
 
+# 정책을 읽지 않고 나온 판단들. 퀀트 대역은 임계값으로, 스텁은 배선 점검으로 돌고,
+# 오류·거부는 판단이 없는 것이다 — 어느 것도 policy_text 를 보지 않는다.
+POLICY_BLIND = ("quant-fallback", "offline-stub", "error:", "refusal")
+
+
 def decide(snapshot: dict, observations: list[dict], history: list[dict] | None = None,
            policy_text: str | None = None, allow_cli: bool = True) -> dict:
-    """한 사이클의 판단을 돌려준다. 실패해도 예외를 던지지 않는다 — 랩은 멈추지 않는다."""
+    """한 사이클의 판단. 정책을 실제로 읽었는지 policy_used 에 같이 담아 돌려준다.
+
+    이 표시가 없으면 정책 평가가 거짓말을 한다 — allow_cli=False 인 과거 재생은
+    CLI 백엔드를 퀀트 대역으로 바꾸므로, 상반된 정책을 넣어도 같은 주문이 나온다.
+    그 결과로 KEEP/REVERT 를 정하면 읽지도 않은 글을 채점하는 것이 된다.
+    """
+    out = _decide(snapshot, observations, history, policy_text, allow_cli)
+    out["policy_used"] = not str(out.get("brain", "")).startswith(POLICY_BLIND)
+    return out
+
+
+def _decide(snapshot: dict, observations: list[dict], history: list[dict] | None = None,
+            policy_text: str | None = None, allow_cli: bool = True) -> dict:
+    """실패해도 예외를 던지지 않는다 — 랩은 멈추지 않는다."""
     backend = C.brain_backend()
     if backend in ("cli", "codex") and not allow_cli:
         # 수십~수천 번 도는 과거 재생은 CLI 대신 같은 관측 팩의 퀀트 점수를 쓴다.

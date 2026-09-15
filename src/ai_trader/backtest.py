@@ -100,6 +100,7 @@ def run(days: int = 30, policy_text: str | None = None, paper: bool = True,
         raise RuntimeError("재생할 캔들이 없다 — 유니버스나 피드를 확인하라")
 
     curve, day, stopped = [], 0, 0
+    policy_used = True          # 사이클마다 AND 로 좁힌다. 재생이 0 사이클이면 평가도 없다.
     while day < days:
         prices = feed.prices(C.UNIVERSE)
         broker.roll_day(prices, today=f"bt-{day:03d}")
@@ -113,6 +114,8 @@ def run(days: int = 30, policy_text: str | None = None, paper: bool = True,
         snapshot = broker.snapshot(prices)
         observations = data.observe(feed, C.UNIVERSE, with_news=False)
         verdict = brain_decide(snapshot, observations, policy_text)
+        # 한 사이클이라도 정책을 안 읽었으면 이 재생은 정책 평가가 아니다.
+        policy_used = policy_used and bool(verdict.get("policy_used"))
         for d in brain.validate(verdict.get("decisions", []), snapshot, prices):
             try:
                 (broker.buy(d["symbol"], d["sleeve"], d["quantity"], prices[d["symbol"]])
@@ -132,6 +135,7 @@ def run(days: int = 30, policy_text: str | None = None, paper: bool = True,
     final = broker.snapshot(prices)
     result = {
         "days": len(curve), "paper": paper, "source": source, "brain": verdict.get("brain"),
+        "policy_used": policy_used,
         **score(curve),
         "stable_return_pct": round(
             (final["sleeves"]["STABLE"]["equity"] / (C.START_CASH * C.SLEEVES["STABLE"]) - 1) * 100, 3),
