@@ -182,6 +182,17 @@ def brain_backend() -> str:
     return "codex" if shutil.which(CODEX_CLI) else "none"
 
 
+def cli_path(name: str) -> str:
+    """CLI 를 띄울 때 넘길 경로. 이름만 넘기면 Windows 에서 죽는다.
+
+    npm 이 깐 CLI 는 Windows 에서 'claude.CMD' 라는 배치 파일이다. shutil.which 는
+    PATHEXT 를 붙여 찾아내지만, subprocess 는 CreateProcess 를 쓰므로 확장자 없는
+    이름으로는 WinError 2 가 난다 — 가용성 검사는 통과하는데 실행만 죽었다.
+    그래서 which 가 찾아낸 그 파일을 그대로 넘긴다.
+    """
+    return shutil.which(name) or name
+
+
 def have_codex() -> bool:
     return bool(shutil.which(CODEX_CLI))
 

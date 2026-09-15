@@ -635,13 +635,60 @@ def no_llm_key_still_trades_on_rules():
     assert brain.decide(b.snapshot(prices), bare, allow_cli=False)["brain"] == "offline-stub"
 
 
+def cli_is_spawned_by_resolved_path():
+    """CLI 를 이름만으로 띄우면 Windows 에서 실행만 조용히 죽는다.
+
+    npm 이 깐 claude/codex 는 Windows 에서 'claude.CMD' 다. shutil.which 는 찾아내니
+    have_codex() 와 check 화면은 ✓ 를 띄우는데, subprocess 는 확장자 없는 이름으로
+    CreateProcess 를 못 해 WinError 2 로 죽는다. decide() 가 그 예외를 삼키므로
+    사람은 LLM 이 판단한다고 믿고 실제로는 퀀트 점수로 매매하게 된다.
+    그러니 spawn 에 넘어가는 argv[0] 은 which 가 찾아낸 그 경로여야 한다.
+    """
+    import shutil
+    import subprocess as sp
+
+    seen = []
+
+    class Done:
+        returncode = 0
+        stdout = '{"result": "{}", "usage": {}}'
+        stderr = ""
+
+    old_run = brain.subprocess.run
+    brain.subprocess.run = lambda cmd, **kw: (seen.append(cmd[0]), Done())[1]
+    try:
+        for name, call in (("claude", lambda: brain.cli_complete("s", "p")),
+                           ("codex", lambda: brain.codex_complete("s", "p"))):
+            seen.clear()
+            try:
+                call()
+            except Exception:
+                pass                      # 응답 파싱까지는 볼 필요 없다 — argv[0] 만 본다
+            assert seen, f"{name} 를 띄우지 않았다"
+            want = shutil.which(name)
+            if want:                      # CLI 가 없는 기계에서는 이름 그대로가 정답이다
+                assert seen[0] == want, f"{name} 를 이름만으로 띄운다: {seen[0]} != {want}"
+    finally:
+        brain.subprocess.run = old_run
+
+    # 위 단언이 통과해도 실제로 띄울 수 있는지는 별개다 — 있으면 한 번 눌러본다.
+    for name in ("claude", "codex"):
+        if shutil.which(name):
+            r = sp.run([C.cli_path(name), "--version"], capture_output=True, timeout=120)
+            assert r.returncode == 0, f"{name} --version 이 {r.returncode} 로 죽는다"
+
+
 def claude_limit_falls_back_to_codex():
     """auto에서 Claude 구독 한도가 끝나면 같은 판단을 Codex CLI가 이어받아야 한다."""
     old_backend = C.BRAIN_BACKEND
     old_claude = brain.cli_complete
     old_codex = brain.codex_complete
     old_quota = brain._CLAUDE_QUOTA_UNTIL
+    old_model = C.CODEX_MODEL
     C.BRAIN_BACKEND = "auto"
+    # 이름은 CODEX_MODEL 을 따라간다 — .env 가 모델을 지정해 두면 'codex' 로 시작하지
+    # 않으므로, 점검은 사람의 설정에 기대지 않고 자기 값을 박아 둔다.
+    C.CODEX_MODEL = ""
     brain._CLAUDE_QUOTA_UNTIL = 0.0
     brain.cli_complete = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("usage limit reached"))
     brain.codex_complete = lambda *a, **kw: (
@@ -657,6 +704,7 @@ def claude_limit_falls_back_to_codex():
         brain.cli_complete = old_claude
         brain.codex_complete = old_codex
         brain._CLAUDE_QUOTA_UNTIL = old_quota
+        C.CODEX_MODEL = old_model
 
 
 def news_reports_dead_feeds_instead_of_going_quiet():
@@ -895,6 +943,7 @@ CHECKS = [
     ("섹터는 사람이 안 넣는다", sector_comes_from_data_not_from_a_human),
     (".env 키가 실제로 읽힌다", env_file_actually_reaches_config),
     ("LLM 키 없어도 규칙으로 매매한다", no_llm_key_still_trades_on_rules),
+    ("CLI 를 이름만으로 띄우지 않는다", cli_is_spawned_by_resolved_path),
     ("Claude 한도 초과 시 Codex가 이어받는다", claude_limit_falls_back_to_codex),
     ("장 마감 판정이 추측을 안 한다", market_gate_knows_when_it_is_guessing),
     ("모의투자는 실주문을 안 낸다", paper_never_trades_on_real_orders),

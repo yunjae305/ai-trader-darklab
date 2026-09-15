@@ -291,9 +291,9 @@ def cli_complete(system: str, prompt: str, model: str | None = None) -> tuple[st
     print 모드는 호출마다 Claude Code 시스템 프롬프트를 싣는다 — 측정값으로 호출당
     약 2만 토큰이다. 그래서 백테스트처럼 호출이 많은 경로에는 쓰지 마라.
     """
-    cmd = [C.BRAIN_CLI, "-p", "--output-format", "json", "--model", model or C.BRAIN_MODEL,
+    cmd = [C.cli_path(C.BRAIN_CLI), "-p", "--output-format", "json", "--model", model or C.BRAIN_MODEL,
            "--system-prompt", system, "--disallowedTools", CLI_DENY,
-           "--permission-mode", "dontAsk", "--permission-prompts", "none",
+           "--permission-mode", "dontAsk",
            "--disable-slash-commands", "--no-session-persistence", "--max-turns", "1"]
     proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
                           timeout=C.BRAIN_CLI_TIMEOUT)
@@ -313,7 +313,7 @@ def codex_complete(system: str, prompt: str, schema: dict | None = None) -> tupl
     with tempfile.TemporaryDirectory(prefix="ai-trader-codex-") as tmp:
         root = Path(tmp)
         output = root / "last.txt"
-        cmd = [C.CODEX_CLI, "exec", "--sandbox", "read-only", "--skip-git-repo-check",
+        cmd = [C.cli_path(C.CODEX_CLI), "exec", "--sandbox", "read-only", "--skip-git-repo-check",
                "--ephemeral", "--ignore-rules", "--json", "-C", tmp,
                "--output-last-message", str(output)]
         if C.CODEX_MODEL:
