@@ -142,6 +142,23 @@ def on_record(stream: str, record: dict) -> None:
         pass       # 알림이 기록을 방해하면 안 된다
 
 
+def verify() -> str:
+    """토큰이 실제로 사는지 원장에 물어보고 봇 이름을 돌려준다. 죽었으면 예외다.
+
+    있다는 것과 되는 것은 다르다 — 폐기·회수된 토큰도 .env 에는 그대로 남아 있고,
+    사람 없이 도는 루프는 알림이 유일한 연락 수단이다. getUpdates 는 쓰지 않는다:
+    telegramctl 이 그 엔드포인트로 long-polling 중이라 서로 방해한다.
+    """
+    if not C.TELEGRAM_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN 이 없다")
+    req = urllib.request.Request(API.format(token=C.TELEGRAM_TOKEN, method="getMe"))
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        out = json.loads(r.read() or b"{}")
+    if not out.get("ok"):
+        raise RuntimeError(f"토큰이 거절됐다: {str(out)[:120]}")
+    return (out.get("result") or {}).get("username") or "?"
+
+
 def chat_ids() -> list[dict]:
     """봇에게 말을 건 사람들의 chat_id. 토큰만 있으면 되고 CHAT_ID 는 없어도 된다."""
     if not C.TELEGRAM_TOKEN:

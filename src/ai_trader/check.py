@@ -19,13 +19,39 @@ def _env() -> list[tuple[str, str, str]]:
     return [(WARN, ".env", f"없음 — {src} 에 키를 넣어라 (.env.example 복사)")]
 
 
+def _cli_runs(name: str) -> str:
+    """CLI 가 실제로 뜨는지. 뜨면 빈 문자열, 아니면 사람이 읽을 이유.
+
+    PATH 에 있다는 것은 실행된다는 뜻이 아니다 — npm 이 깐 'claude.CMD' 는
+    which 로는 잡히지만 subprocess 가 확장자 없는 이름으로는 못 띄운다.
+    그 상태로 ✓ 를 띄운 동안 랩은 LLM 없이 퀀트 점수로만 돌고 있었다.
+    """
+    import subprocess
+    try:
+        r = subprocess.run([C.cli_path(name), "--version"],
+                           capture_output=True, timeout=60)
+    except Exception as exc:
+        return f"{type(exc).__name__}: {str(exc)[:80]}"
+    return "" if r.returncode == 0 else f"--version 이 {r.returncode} 로 죽는다"
+
+
 def _brain() -> list[tuple[str, str, str]]:
     backend = C.brain_backend()
+    # 판단이 되는지는 첫 호출에서만 알 수 있다. 여기서는 '띄울 수 있나'까지 보고,
+    # 거기까지만 봤다고 밝힌다 — 안 본 것을 봤다고 하는 것이 이 파일의 유일한 금기다.
     if backend == "cli":
+        broken = _cli_runs(C.BRAIN_CLI)
+        if broken:
+            return [(NO, "판단 엔진", f"Claude CLI 를 못 띄운다 — {broken}")]
         fallback = " → Codex CLI 자동 전환" if C.have_codex() else ""
-        return [(OK, "판단 엔진", f"{C.BRAIN_MODEL} · Claude CLI{fallback} (API 키 불필요)")]
+        return [(OK, "판단 엔진", f"{C.BRAIN_MODEL} · Claude CLI{fallback} "
+                                  "· 실행 확인 (판단은 첫 호출에서 검증)")]
     if backend == "codex":
-        return [(OK, "판단 엔진", f"{C.CODEX_MODEL or 'Codex 설정 모델'} · Codex CLI")]
+        broken = _cli_runs(C.CODEX_CLI)
+        if broken:
+            return [(NO, "판단 엔진", f"Codex CLI 를 못 띄운다 — {broken}")]
+        return [(OK, "판단 엔진", f"{C.CODEX_MODEL or 'Codex 설정 모델'} · Codex CLI "
+                                  "· 실행 확인 (판단은 첫 호출에서 검증)")]
     if backend == "none":
         requested = f"AI_TRADER_BRAIN={C.BRAIN_BACKEND} · " if C.BRAIN_BACKEND != "auto" else ""
         return [(WARN, "판단 엔진", requested + "LLM 없음 → 퀀트 점수로 매매한다 "
@@ -48,7 +74,12 @@ def _telegram() -> list[tuple[str, str, str]]:
     """알림 경로. 루프는 사람 없이 도니까, 이게 꺼져 있으면 사고를 몇 시간 뒤에 안다."""
     from . import telegram as T
     if T.enabled():
-        return [(OK, "알림", "텔레그램 · 체결·손절·킬스위치·엔진 오류")]
+        try:
+            bot = T.verify()
+        except Exception as exc:
+            return [(NO, "알림", f"토큰이 안 먹는다 — {type(exc).__name__}: {str(exc)[:90]} "
+                                 "· 사고가 나도 화면을 열어야만 안다")]
+        return [(OK, "알림", f"텔레그램 @{bot} · 체결·손절·킬스위치·엔진 오류")]
     if C.TELEGRAM_TOKEN:
         return [(WARN, "알림", "TELEGRAM_CHAT_ID 없음 · `python3 -m ai_trader.telegram --chat-id`")]
     return [(WARN, "알림", "TELEGRAM_BOT_TOKEN 없음 · 사고가 나도 화면을 열어야만 안다")]

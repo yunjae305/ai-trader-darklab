@@ -182,6 +182,18 @@ def brain_backend() -> str:
     return "codex" if shutil.which(CODEX_CLI) else "none"
 
 
+def brain_name() -> str:
+    """지금 판단을 실제로 하는 것의 이름. 기록·화면·콘솔이 같은 값을 써야 한다.
+
+    이 계산이 호출부에 흩어져 있던 동안 mlflow 만 C.BRAIN_MODEL 을 그대로 적어,
+    codex 로 돌린 실험이 기록에는 claude 로 남았다. 실험 비교가 거짓이 된다.
+    """
+    return {"api": BRAIN_MODEL,
+            "cli": f"{BRAIN_MODEL}(cli→codex)",
+            "codex": f"{CODEX_MODEL or 'codex'}(cli)",
+            }.get(brain_backend(), "quant-fallback(LLM 없음)")
+
+
 def cli_path(name: str) -> str:
     """CLI 를 띄울 때 넘길 경로. 이름만 넘기면 Windows 에서 죽는다.
 

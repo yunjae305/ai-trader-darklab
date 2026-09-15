@@ -256,13 +256,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.mock:
         print("[darklab] 모의자본 시장 상한: 국내 50% / 해외 50%")
-    brain_name = ({"api": C.BRAIN_MODEL, "cli": f"{C.BRAIN_MODEL}(cli→codex)",
-                   "codex": f"{C.CODEX_MODEL or 'codex'}(cli)"}
-                  .get(C.brain_backend(), "quant-fallback(LLM 없음)"))
+    brain_name = C.brain_name()
     print(f"[darklab] broker={broker.mode} feed={feed.source} brain={brain_name}")
 
     with journal.mlflow_run("darklab-loop", params={
-            "broker": broker.mode, "feed": feed.source, "model": C.BRAIN_MODEL,
+            "broker": broker.mode, "feed": feed.source, "model": brain_name,
             "sleeves": C.SLEEVES, "universe": len(C.UNIVERSE)}) as mlf:
         step, was_open = 0, True
         while True:

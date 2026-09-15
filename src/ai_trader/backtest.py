@@ -163,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     source = "toss" if args.live_data else args.source
-    with journal.mlflow_run("backtest", params={"days": args.days, "model": C.BRAIN_MODEL,
+    with journal.mlflow_run("backtest", params={"days": args.days, "model": C.brain_name(),
                                                 "source": source, "sleeves": C.SLEEVES}) as mlf:
         result = run(days=args.days, paper=not args.live_data, mlf=mlf, source=source)
     journal.jot("backtests", {k: v for k, v in result.items() if k != "final"})

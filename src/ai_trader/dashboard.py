@@ -322,9 +322,7 @@ def command_state() -> dict:
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "lab": lab_state(),
         "last_cycle": cycles[-1] if cycles else None,
-        "brain": ({"api": C.BRAIN_MODEL, "cli": f"{C.BRAIN_MODEL}(cli→codex)",
-                   "codex": f"{C.CODEX_MODEL or 'codex'}(cli)"}
-                  .get(C.brain_backend(), "quant-fallback")),
+        "brain": C.brain_name(),
         "has_llm_key": C.have_brain(),
         "brain_backend": C.brain_backend(),
         "guardrails": guardrails(),
