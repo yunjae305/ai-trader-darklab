@@ -249,7 +249,7 @@ function engineBlock(e, g) {
           <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.4 2" stroke-linecap="round"/></svg>
         Next scan</span><b class="mono">${when}</b></div>
       ${bar}
-      <div class="cap" style="margin:0">Cycle ${Math.round(g.cycle_seconds / 60)}분 · pid ${e.pid}</div>`
+      <div class="cap" style="margin:0">판단 ${g.cycle_seconds < 60 ? g.cycle_seconds + '초' : Math.round(g.cycle_seconds / 60) + '분'} · 감시 ${g.watch_seconds}초 · pid ${e.pid}</div>`
       : `<div class="cap" style="margin:12px 0 0">실주문 ${g.live_trading
           ? '<b class="neg">허용</b> (AI_TRADER_LIVE=1)' : '<b class="pos">차단</b>'}
           — 이 버튼은 그 설정을 바꾸지 못한다</div>`}
@@ -322,6 +322,7 @@ function renderCommand(d) {
     </div>
     <div style="margin-top:16px">
       <div class="kv"><span>손절</span><b class="neg">${g.stop_loss_pct}%</b></div>
+      <div class="kv"><span>익절 문턱</span><b class="pos">+${g.take_profit_pct}%</b></div>
       <div class="kv"><span>당일 정지선</span><b class="neg">${g.daily_loss_kill_pct}%</b></div>
       <div class="kv"><span>종목당 상한</span><b>${g.max_position_pct}%</b></div>
       <div class="kv"><span>국내 자본 상한</span><b>${Math.round(g.market_weights.KR * 100)}%</b></div>
@@ -644,7 +645,11 @@ function renderControl(d) {
       <div class="kv"><span>국내/해외 상한</span><b>${d.guardrails.market_weights.KR * 100}% / ${d.guardrails.market_weights.US * 100}%</b></div>
       <div class="kv"><span>USD/KRW 환산</span><b>${Number(d.guardrails.usd_krw).toLocaleString('ko-KR')}</b></div>
       <div class="kv"><span>손절</span><b class="neg">${d.guardrails.stop_loss_pct}%</b></div>
+      <div class="kv"><span>익절 문턱</span><b class="pos">+${d.guardrails.take_profit_pct}% <span class="cap">(팔아야 하는 선이 아니라 팔아도 되는 문턱)</span></b></div>
       <div class="kv"><span>당일 정지</span><b class="neg">${d.guardrails.daily_loss_kill_pct}%</b></div>
+      <div class="kv"><span>판단 주기</span><b>${d.guardrails.cycle_seconds}초</b></div>
+      <div class="kv"><span>호가 감시</span><b>${d.guardrails.watch_seconds}초 <span class="cap">(LLM 미호출)</span></b></div>
+      <div class="kv"><span>주문 세션</span><b>${esc((d.guardrails.kr_sessions || []).join(', '))}</b></div>
       <div class="kv"><span>사이클당 최대 주문</span><b>${d.guardrails.max_orders_per_cycle}건</b></div>
       <div class="kv"><span>벤치마크</span><b>${esc(d.guardrails.benchmark)}</b></div>
       <div class="kv"><span>실주문</span><b class="${d.guardrails.live_trading ? 'neg' : 'pos'}">${

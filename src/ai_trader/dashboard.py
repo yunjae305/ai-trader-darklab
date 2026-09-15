@@ -95,7 +95,8 @@ def lab_state() -> dict:
             return {
                 "mode": "kiwoom-demo", "source": "kiwoom-mock",
                 "market_open": data.KiwoomFeed().is_open(),
-                "market_label": "키움 모의투자 · " + ("장 운영중" if data.session_now() else "장 마감"),
+                "market_label": "키움 모의투자 · " + (
+                    f"장 운영중 ({data.session_label()})" if data.session_now() else "장 마감"),
                 "equity": round(equity), "cash": round(cash),
                 "day_start_equity": round(start) if start else None,
                 "day_return_pct": day_pct,
@@ -124,7 +125,8 @@ def lab_state() -> dict:
     snap["market_open"] = bool(getattr(feed, "is_open", lambda: True)())
     # 합성 시장에는 장 시간이 없다. 새벽 3시에 "장 운영중"이라고 적으면 거짓말이 된다.
     snap["market_label"] = ("합성 시장" if feed.source == "synthetic"
-                            else "장 운영중" if snap["market_open"] else "장 마감")
+                            else f"장 운영중 ({data.session_label() or '해외'})"
+                            if snap["market_open"] else "장 마감")
     return _named(snap)
 
 
@@ -143,6 +145,9 @@ def guardrails() -> dict:
         # 0.07*100 은 7.000000000000001 이 된다. 화면에 그대로 내보내지 않는다.
         "max_position_pct": round(C.MAX_POSITION_PCT * 100, 2),
         "stop_loss_pct": round(C.STOP_LOSS_PCT, 2),
+        "take_profit_pct": round(C.TAKE_PROFIT_PCT, 2),
+        "watch_seconds": C.WATCH_SECONDS,
+        "kr_sessions": list(data.KR_SESSIONS),
         "daily_loss_kill_pct": round(-C.DAILY_LOSS_KILL_PCT * 100, 2),
         "max_orders_per_cycle": C.MAX_ORDERS_PER_CYCLE,
         "cycle_seconds": C.CYCLE_SECONDS,
