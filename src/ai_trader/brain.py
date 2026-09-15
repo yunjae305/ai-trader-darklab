@@ -12,6 +12,7 @@ import math
 import re
 import subprocess
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -341,27 +342,30 @@ def codex_complete(system: str, prompt: str, schema: dict | None = None) -> tupl
             "input": usage.get("input_tokens"), "output": usage.get("output_tokens")}
 
 
-_CLAUDE_QUOTA_EXHAUSTED = False
+# Claude 가 한도로 막힌 동안만 Codex 를 쓴다. 0 이면 평소처럼 Claude 부터.
+# 한 번 막혔다고 영구히 Codex 에 남으면, 한도가 풀려도 돌아오지 못한다.
+_CLAUDE_QUOTA_UNTIL = 0.0
 
 
 def local_complete(system: str, prompt: str, schema: dict | None = None,
                    claude_model: str | None = None) -> tuple[str, dict, str]:
     """로컬 구독 CLI를 고른다. auto에서 Claude 실패 시 Codex로 이어간다."""
-    global _CLAUDE_QUOTA_EXHAUSTED
+    global _CLAUDE_QUOTA_UNTIL
     backend = C.brain_backend()
     if backend == "codex":
         text, usage = codex_complete(system, prompt, schema)
         return text, usage, f"{C.CODEX_MODEL or 'codex'}(cli)"
     if backend != "cli":
         raise RuntimeError(f"로컬 CLI 백엔드가 아니다: {backend}")
-    if not _CLAUDE_QUOTA_EXHAUSTED:
+    if time.time() >= _CLAUDE_QUOTA_UNTIL:
         try:
             text, usage = cli_complete(system, prompt, model=claude_model)
+            _CLAUDE_QUOTA_UNTIL = 0.0   # 돌아왔다
             return text, usage, f"{claude_model or C.BRAIN_MODEL}(cli)"
         except Exception as exc:
             msg = str(exc).lower()
             if any(word in msg for word in ("limit", "quota", "credit", "billing", "rate")):
-                _CLAUDE_QUOTA_EXHAUSTED = True
+                _CLAUDE_QUOTA_UNTIL = time.time() + C.BRAIN_QUOTA_COOLDOWN
             if C.BRAIN_BACKEND.lower() != "auto" or not C.have_codex():
                 raise
     text, usage = codex_complete(system, prompt, schema)

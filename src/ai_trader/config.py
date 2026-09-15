@@ -112,6 +112,9 @@ BRAIN_CLI = os.getenv("AI_TRADER_CLAUDE_CLI", "claude")
 CODEX_CLI = os.getenv("AI_TRADER_CODEX_CLI", "codex")
 CODEX_MODEL = os.getenv("AI_TRADER_CODEX_MODEL", "")  # 비우면 ~/.codex/config.toml 설정 사용
 BRAIN_CLI_TIMEOUT = int(os.getenv("AI_TRADER_BRAIN_TIMEOUT", "240"))
+# Claude 한도에 걸린 뒤 다시 찔러보기까지 기다리는 시간. 한도는 몇 시간이면 풀리는데
+# 루프는 며칠씩 돈다 — 영원히 Codex 에 남지 않게 한다.
+BRAIN_QUOTA_COOLDOWN = int(os.getenv("AI_TRADER_QUOTA_COOLDOWN", "3600"))
 
 CYCLE_SECONDS = int(os.getenv("AI_TRADER_CYCLE_SECONDS", "900"))  # 15분
 # mlflow 3.x 는 파일 스토어를 폐기했다 — 로컬 sqlite 가 기본.
