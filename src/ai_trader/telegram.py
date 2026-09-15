@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 
@@ -75,6 +76,13 @@ def _money(v) -> str:
     return "—" if v is None else f"{round(float(v)):,}"
 
 
+def _brief(text, limit: int = 80) -> str:
+    """첫 문장만, 길면 자른다. 한국어는 '~다.' 로 끝나므로 그것도 문장 끝으로 본다."""
+    s = " ".join(str(text or "").split())
+    head = re.split(r"(?<=다[.!?])\s|(?<=[.!?])\s", s, maxsplit=1)[0]
+    return head if len(head) <= limit else head[:limit].rstrip() + "…"
+
+
 def _decision_text(r: dict) -> str | None:
     """체결·거부·오류만 알린다. 판단만 하고 주문이 안 나간 것은 기록으로 충분하다."""
     status = r.get("status")
@@ -101,9 +109,12 @@ def _decision_text(r: dict) -> str | None:
         lines.append(f"주문번호 {r['order_no']}")
     if r.get("forced"):
         lines.append(f"강제: {r['forced']}")
-    why = r.get("reason_rejected") or r.get("reason") or ""
-    if why:
-        lines.append(str(why)[:200])
+    # 거부는 진단 정보라 조금 길게, 매수 근거는 첫 문장만. 알림은 폰에서 훑는 것이지
+    # 읽는 것이 아니다 — 자세한 근거는 대시보드와 daily_log 에 그대로 남는다.
+    if r.get("reason_rejected"):
+        lines.append(_brief(r["reason_rejected"], 140))
+    elif r.get("reason"):
+        lines.append(_brief(r["reason"], 80))
     return "\n".join(lines)
 
 
