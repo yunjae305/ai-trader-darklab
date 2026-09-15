@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from . import autoresearch, backtest, brain, broker as bk, config as C, data, journal, loop
@@ -639,9 +640,9 @@ def claude_limit_falls_back_to_codex():
     old_backend = C.BRAIN_BACKEND
     old_claude = brain.cli_complete
     old_codex = brain.codex_complete
-    old_quota = brain._CLAUDE_QUOTA_EXHAUSTED
+    old_quota = brain._CLAUDE_QUOTA_UNTIL
     C.BRAIN_BACKEND = "auto"
-    brain._CLAUDE_QUOTA_EXHAUSTED = False
+    brain._CLAUDE_QUOTA_UNTIL = 0.0
     brain.cli_complete = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("usage limit reached"))
     brain.codex_complete = lambda *a, **kw: (
         '{"market_view":"ok","lesson":"","watchlist":[],"decisions":[]}',
@@ -649,12 +650,13 @@ def claude_limit_falls_back_to_codex():
     try:
         out = brain._local_decide("system", "prompt")
         assert out["brain"].endswith("(cli)") and out["brain"].startswith("codex"), out
-        assert brain._CLAUDE_QUOTA_EXHAUSTED, "한도 초과를 다음 사이클에 또 Claude로 보낸다"
+        # 한도는 영구가 아니라 쿨다운이다 — 지금은 막히고, 시간이 지나면 다시 Claude로 간다.
+        assert brain._CLAUDE_QUOTA_UNTIL > time.time(), "한도 초과를 다음 사이클에 또 Claude로 보낸다"
     finally:
         C.BRAIN_BACKEND = old_backend
         brain.cli_complete = old_claude
         brain.codex_complete = old_codex
-        brain._CLAUDE_QUOTA_EXHAUSTED = old_quota
+        brain._CLAUDE_QUOTA_UNTIL = old_quota
 
 
 def news_reports_dead_feeds_instead_of_going_quiet():
