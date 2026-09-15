@@ -369,9 +369,20 @@ def _avail(node: dict) -> float:
 class Venue:
     market = ""
     name = ""
+    CAN_CONFIRM = False        # confirm() 이 원장에 실제로 물어보는 창구만 True
 
     def send(self, symbol: str, side: str, qty: float, price: float) -> dict:
         raise NotImplementedError
+
+    def confirm(self, sent: dict, symbol: str, want_qty: float,
+                want_price: float) -> dict:
+        """주문이 실제로 얼마나, 얼마에 체결됐는지 원장에 물어본다.
+
+        접수는 체결이 아니다. 창구가 확인을 지원하지 않으면 확인했다고 하지 않는다 —
+        state='UNKNOWN' 으로 돌려주고, 장부를 얼마나 움직일지는 호출부가 정한다.
+        """
+        return {"filled_qty": 0.0, "fill_price": want_price, "open_qty": want_qty,
+                "state": "UNKNOWN", "detail": "이 창구는 체결 확인을 지원하지 않는다"}
 
     def positions(self) -> list[dict]:
         """실계좌 보유. [{symbol, qty, avg}] — 못 읽으면 예외를 던진다(빈 목록 아님)."""
@@ -546,6 +557,7 @@ class KiwoomVenue(Venue):
     """
     market = "KR"
     name = "키움증권"
+    CAN_CONFIRM = True
 
     def __init__(self):
         from .kiwoom import Kiwoom
@@ -598,6 +610,51 @@ class KiwoomVenue(Venue):
         node = dep if isinstance(dep, dict) else {}
         return _avail(node)
 
+    # 접수 직후 원장에 체결이 찍히기까지는 시차가 있다. 지정가는 몇 초로 안 끝나므로
+    # 여기서 오래 기다리지 않는다 — 안 찍혔으면 미체결로 남기고 다음 사이클이 대조한다.
+    CONFIRM_TRIES, CONFIRM_WAIT = 3, 0.7
+
+    def confirm(self, sent: dict, symbol: str, want_qty: float,
+                want_price: float) -> dict:
+        """주문번호로 실제 체결 수량·가격을 읽는다. 모르면 UNKNOWN 이라고 말한다.
+
+        이것이 없으면 접수 응답만 보고 장부를 움직인다 — 지정가가 호가에 닿지도
+        않았는데 보유가 늘고 현금이 빠지고 저널에 FILLED 가 찍혔다. 그 뒤의 모든
+        숫자(주문가능금액·손절선·20% 상한·당일 손익)가 거짓 위에서 계산된다.
+        """
+        ord_no = str(sent.get("ord_no") or "").strip()
+        if not ord_no:
+            return {"filled_qty": 0.0, "fill_price": want_price, "open_qty": want_qty,
+                    "state": "UNKNOWN", "detail": "주문번호가 안 왔다"}
+        last = None
+        for i in range(self.CONFIRM_TRIES):
+            try:
+                rows = [r for r in self.api.orders(symbol) if r["order_no"] == ord_no]
+            except Exception as exc:
+                last = f"{type(exc).__name__}: {str(exc)[:80]}"
+                rows = []
+            if rows:
+                r = rows[0]
+                filled = float(r.get("filled_qty") or 0)
+                open_qty = float(r.get("open_qty") or 0)
+                # 체결가가 비면 체결수량도 못 믿는다 — 지어내지 않는다.
+                px = r.get("filled_price") or (want_price if filled else None)
+                if filled > 0 and not px:
+                    return {"filled_qty": 0.0, "fill_price": want_price,
+                            "open_qty": filled + open_qty, "state": "UNKNOWN",
+                            "detail": f"체결 {filled} 인데 체결가가 없다"}
+                state = ("FILLED" if filled > 0 and open_qty == 0 else
+                         "PARTIALLY_FILLED" if filled > 0 else "ACCEPTED")
+                return {"filled_qty": filled, "fill_price": float(px or want_price),
+                        "open_qty": open_qty, "state": state,
+                        "detail": r.get("state") or ""}
+            if i < self.CONFIRM_TRIES - 1:
+                time.sleep(self.CONFIRM_WAIT)
+        # 주문번호는 받았는데 목록에 없다. 접수는 됐으니 미체결로 본다 — 재주문 금지.
+        return {"filled_qty": 0.0, "fill_price": want_price, "open_qty": want_qty,
+                "state": "ACCEPTED" if last is None else "UNKNOWN",
+                "detail": last or "원장 주문목록에 아직 안 보인다"}
+
     def send(self, symbol: str, side: str, qty: int, price: float) -> dict:
         if self.api.mode == "real" and not C.LIVE_TRADING:
             return {"skipped": "AI_TRADER_LIVE != 1", "venue": self.name,
@@ -610,6 +667,42 @@ class KiwoomVenue(Venue):
 
 
 VENUES = {"KR": KiwoomVenue, "US": TossVenue}
+
+
+def _settle(broker, venue, sent, symbol, sleeve, side, want_qty, want_price) -> dict:
+    """창구에 실제 체결을 물어 **그만큼만** 장부에 넣는다.
+
+    전에는 접수 응답을 받자마자 요청 수량 전부를 관측가로 장부에 넣었다. 지정가가
+    호가에 닿지도 않았는데 보유가 늘고 현금이 빠지고 저널에 FILLED 가 찍혔다 —
+    그 뒤의 주문가능금액·손절선·20% 상한·당일 손익이 전부 거짓 위에서 계산됐다.
+
+    확인을 지원하지 않는 창구(토스)는 예전처럼 요청대로 넣되 state='ASSUMED' 로
+    남긴다. 동작을 바꾸지 않으면서, 확인하지 않은 것을 확인했다고 적지는 않는다.
+    """
+    if venue is None:
+        # 로컬 모의원장은 우리가 체결시키므로 즉시체결이 사실이다.
+        actual = {"filled_qty": want_qty, "fill_price": want_price, "open_qty": 0.0,
+                  "state": "FILLED", "detail": "로컬 모의원장"}
+    elif venue.CAN_CONFIRM:
+        actual = venue.confirm(sent, symbol, want_qty, want_price)
+    else:
+        actual = {"filled_qty": want_qty, "fill_price": want_price, "open_qty": 0.0,
+                  "state": "ASSUMED",
+                  "detail": f"{venue.name} 은 체결 확인을 지원하지 않는다 — 요청대로 가정했다"}
+
+    filled = float(actual.get("filled_qty") or 0)
+    if filled <= 0:
+        # 미체결은 보유가 아니다. 장부를 건드리지 않고 무엇이 됐는지만 돌려준다.
+        return {"qty": 0.0, "price": actual.get("fill_price"), "cost": 0.0,
+                "proceeds": 0.0, "realized_pnl": None,
+                "broker": sent, "confirm": actual}
+
+    px = float(actual.get("fill_price") or want_price)
+    fill = (PaperBroker.buy(broker, symbol, sleeve, filled, px) if side == "BUY"
+            else PaperBroker.sell(broker, symbol, filled, px))
+    fill["broker"] = sent
+    fill["confirm"] = actual
+    return fill
 
 
 class RoutedBroker(PaperBroker):
@@ -712,9 +805,7 @@ class RoutedBroker(PaperBroker):
         sent = self._send(symbol, "BUY", qty, price)
         if sent.get("skipped"):
             raise Rejected(str(sent["skipped"]))
-        fill = super().buy(symbol, sleeve, qty, price)
-        fill["broker"] = sent
-        return fill
+        return _settle(self, self.venue_for(symbol), sent, symbol, sleeve, "BUY", qty, price)
 
     def sell(self, symbol: str, qty: float, price: float) -> dict:
         self.venue_for(symbol)
@@ -722,9 +813,8 @@ class RoutedBroker(PaperBroker):
         sent = self._send(symbol, "SELL", probe_fill["qty"], price)
         if sent.get("skipped"):
             raise Rejected(str(sent["skipped"]))
-        fill = super().sell(symbol, qty, price)
-        fill["broker"] = sent
-        return fill
+        return _settle(self, self.venue_for(symbol), sent, symbol, None, "SELL",
+                       probe_fill["qty"], price)
 
 
 class HybridMockBroker(PaperBroker):
@@ -758,9 +848,9 @@ class HybridMockBroker(PaperBroker):
             if self.kr is None:
                 raise Rejected("키움 모의투자 창구가 없다")
             sent = self.kr.send(symbol, "BUY", qty, price)
-        fill = super().buy(symbol, sleeve, qty, price)
-        fill["broker"] = sent or {"venue": "해외 로컬 모의원장", "paper": True}
-        return fill
+            return _settle(self, self.kr, sent, symbol, sleeve, "BUY", qty, price)
+        return _settle(self, None, {"venue": "해외 로컬 모의원장", "paper": True},
+                       symbol, sleeve, "BUY", qty, price)
 
     def sell(self, symbol: str, qty: float, price: float) -> dict:
         probe_fill = self._probe().sell(symbol, qty, price)
@@ -769,9 +859,10 @@ class HybridMockBroker(PaperBroker):
             if self.kr is None:
                 raise Rejected("키움 모의투자 창구가 없다")
             sent = self.kr.send(symbol, "SELL", probe_fill["qty"], price)
-        fill = super().sell(symbol, qty, price)
-        fill["broker"] = sent or {"venue": "해외 로컬 모의원장", "paper": True}
-        return fill
+            return _settle(self, self.kr, sent, symbol, None, "SELL",
+                           probe_fill["qty"], price)
+        return _settle(self, None, {"venue": "해외 로컬 모의원장", "paper": True},
+                       symbol, None, "SELL", probe_fill["qty"], price)
 
 
 def make_broker(paper: bool = True, mock: bool = False):

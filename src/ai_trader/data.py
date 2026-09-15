@@ -284,6 +284,7 @@ class KiwoomFeed:
         from .kiwoom import Kiwoom
         self.api = Kiwoom()
         self._candles: dict[str, tuple[float, list[dict]]] = {}
+        self._quotes: dict[str, tuple[float, float, str]] = {}
         self._request_lock = threading.Lock()
         self._last_request = 0.0
 
@@ -311,9 +312,48 @@ class KiwoomFeed:
             self._candles[symbol] = (time.time(), rows)
             return rows[-n:]
 
+    # 감시용 시세는 전략용 캔들과 신선도 요구가 다르다. 캔들은 지표를 만드는 것이라
+    # 5 분 캐시로 충분하지만, 손절·익절·킬스위치는 그 5 분 안에 일어난다 —
+    # 같은 캐시에서 가격을 꺼내면 3 초마다 봐도 최대 5 분 묵은 값을 본다.
+    QUOTE_TTL = 2.0
+
+    def quote_price(self, symbol: str) -> tuple[float, str]:
+        """지금 팔면 받는 값(최우선 매수호가)과 원장이 찍은 호가 기준시간.
+
+        최종가 대신 매수호가를 쓴다 — 보유를 정리할 때 실제로 닿는 값이 그것이고,
+        손절선을 스프레드만큼 낙관적으로 보지 않게 된다. 읽지 못하면 (0, "") 다.
+        """
+        from .kiwoom import num
+        cached = self._quotes.get(symbol)
+        if cached and time.time() - cached[0] < self.QUOTE_TTL:
+            return cached[1], cached[2]
+        with self._request_lock:
+            cached = self._quotes.get(symbol)
+            if cached and time.time() - cached[0] < self.QUOTE_TTL:
+                return cached[1], cached[2]
+            try:
+                q = self.api.quote(symbol)
+            except Exception:
+                return 0.0, ""
+            # 부호는 전일 대비 방향이지 음수 가격이 아니다 — num 이 떼어낸다.
+            px = num(q.get("buy_fpr_bid")) or num(q.get("sel_fpr_bid")) or 0.0
+            at = str(q.get("bid_req_base_tm") or "")
+            self._quotes[symbol] = (time.time(), float(px), at)
+            return float(px), at
+
     def price(self, symbol: str) -> float:
+        px, _ = self.quote_price(symbol)
+        if px > 0:
+            return px
+        # 호가를 못 읽었으면 캔들로 물러난다. 다만 그것은 최대 5 분 묵은 값이다 —
+        # 0 을 돌려주면 감시가 종목을 통째로 건너뛰므로, 묵은 값이라도 주고 밝힌다.
         c = self.candles(symbol, 60)
         return c[-1]["close"] if c else 0.0
+
+    def price_age(self, symbol: str) -> float | None:
+        """이 가격이 몇 초 전 것인가. 모르면 None."""
+        cached = self._quotes.get(symbol)
+        return None if not cached else round(time.time() - cached[0], 2)
 
     def prices(self, symbols: list[str]) -> dict[str, float]:
         return {s: self.price(s) for s in symbols}

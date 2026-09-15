@@ -304,8 +304,10 @@ def portfolio() -> dict:
         except Exception as exc:
             div = {"unavailable": f"{type(exc).__name__}: {exc}"}
     return {"snapshot": _named(snap), "diversification": div,
+            # 장부가 움직인 기록만. 부분체결·ASSUMED 도 움직인 것이다 — status 문자열
+            # 하나로 거르면 그것들이 화면에서 사라진다.
             "fills": [f for f in journal.read("decisions", limit=300)
-                      if f.get("status") == "FILLED"][-40:][::-1]}
+                      if float(f.get("filled_qty") or 0) > 0][-40:][::-1]}
 
 
 def market_insight(limit: int = 20) -> list[dict]:

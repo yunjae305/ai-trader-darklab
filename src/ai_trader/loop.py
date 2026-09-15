@@ -49,6 +49,15 @@ def held_correlation(broker, feed, symbols: list[str] | None = None) -> dict:
         return {"unavailable": f"{type(exc).__name__}: {exc}"}
 
 
+def did_fill(rec: dict) -> bool:
+    """이 기록이 실제로 장부를 움직였나. 상태 문자열이 아니라 체결 수량으로 센다.
+
+    상태는 FILLED / PARTIALLY_FILLED / ASSUMED 로 갈리는데 셋 다 장부가 움직인
+    것이다. `status == "FILLED"` 로만 세면 부분체결이 '체결 0건'으로 보인다.
+    """
+    return float(rec.get("filled_qty") or 0) > 0
+
+
 def _filled(fill: dict, symbol: str) -> dict:
     """체결 기록. **요청한 것이 아니라 실제로 체결된 것**을 적는다.
 
@@ -59,8 +68,14 @@ def _filled(fill: dict, symbol: str) -> dict:
     맞춰 볼 방법이 없다 — 주문이 실제로 나갔는지를 영원히 확인 못 한다.
     """
     sent = fill.get("broker") or {}
+    conf = fill.get("confirm") or {}
+    # 상태는 창구가 말한 것을 적는다. 전에는 무조건 FILLED 였고, 접수만 된 주문도
+    # 체결로 남았다 — 그러면 우리 기록과 증권사 원장이 왜 다른지 설명할 수 없다.
+    # ASSUMED 는 확인을 지원하지 않는 창구라 요청대로 가정했다는 뜻이다.
     out = {
-        "status": "FILLED",
+        "status": conf.get("state") or "FILLED",
+        "open_qty": conf.get("open_qty"),                   # 아직 남은 미체결 수량
+        "confirm_detail": conf.get("detail"),
         "filled_qty": fill.get("qty"),                      # 실제 체결 수량
         "fill_price": fill.get("price"),
         "amount": fill.get("cost", fill.get("proceeds")),   # 수수료·세금 포함 금액
@@ -214,7 +229,7 @@ def cycle(broker, feed, mlf=None, step: int | None = None, with_news: bool = Tru
         "lesson": verdict.get("lesson", "")[:400],
         "watchlist": verdict.get("watchlist", [])[:8],
         "proposed": len(verdict.get("decisions", [])), "executed": len(results),
-        "filled": sum(1 for r in results if r["status"] == "FILLED"),
+        "filled": sum(1 for r in results if did_fill(r)),
         "equity": after["equity"], "day_return_pct": after["day_return_pct"],
         "usage": verdict.get("usage", {}), "error": verdict.get("error"),
     })
@@ -224,7 +239,7 @@ def cycle(broker, feed, mlf=None, step: int | None = None, with_news: bool = Tru
         "day_return_pct": after["day_return_pct"],
         "stable_equity": after["sleeves"]["STABLE"]["equity"],
         "aggressive_equity": after["sleeves"]["AGGRESSIVE"]["equity"],
-        "filled_orders": sum(1 for r in results if r["status"] == "FILLED"),
+        "filled_orders": sum(1 for r in results if did_fill(r)),
     }, step=step)
 
     return {"snapshot": after, "verdict": verdict, "decisions": orders, "results": results}

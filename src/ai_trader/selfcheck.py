@@ -635,6 +635,98 @@ def no_llm_key_still_trades_on_rules():
     assert brain.decide(b.snapshot(prices), bare, allow_cli=False)["brain"] == "offline-stub"
 
 
+def unfilled_order_does_not_become_a_holding():
+    """접수는 체결이 아니다. 창구가 체결 0 을 말하면 장부는 움직이지 않아야 한다.
+
+    전에는 주문 응답을 받자마자 요청 수량 전부를 관측가로 장부에 넣고 FILLED 을
+    적었다. 지정가가 호가에 닿지도 않았는데 보유가 늘고 현금이 빠졌으니, 그 뒤의
+    주문가능금액·손절선·20% 상한·당일 손익이 전부 거짓 위에서 계산됐다.
+    """
+    class Fake(bk.Venue):
+        market, name, CAN_CONFIRM = "KR", "가짜창구", True
+
+        def __init__(self, filled, open_qty):
+            self.filled, self.open_qty, self.sent = filled, open_qty, []
+
+        def send(self, symbol, side, qty, price):
+            self.sent.append((symbol, side, qty, price))
+            return {"ord_no": "0000001", "venue": self.name}
+
+        def confirm(self, sent, symbol, want_qty, want_price):
+            state = ("FILLED" if self.filled and not self.open_qty else
+                     "PARTIALLY_FILLED" if self.filled else "ACCEPTED")
+            return {"filled_qty": self.filled, "fill_price": want_price,
+                    "open_qty": self.open_qty, "state": state, "detail": ""}
+
+    # 1) 전량 미체결 — 장부가 그대로여야 한다.
+    b = bk.HybridMockBroker.fresh(10_000_000)
+    b.kr = Fake(filled=0, open_qty=10)
+    cash_before = dict(b.cash)
+    fill = b.buy("005930", "AGGRESSIVE", 7, 100_000)
+    assert b.kr.sent, "주문을 안 보냈다"
+    assert not b.positions, f"미체결인데 보유가 생겼다: {b.positions}"
+    assert b.cash == cash_before, f"미체결인데 현금이 빠졌다: {b.cash} != {cash_before}"
+    rec = loop._filled(fill, "005930")
+    assert rec["status"] == "ACCEPTED", rec["status"]
+    assert not loop.did_fill(rec), "미체결을 체결로 센다"
+
+    # 2) 부분 체결 — 체결된 3 주만 들어가야 한다.
+    b = bk.HybridMockBroker.fresh(10_000_000)
+    b.kr = Fake(filled=3, open_qty=4)
+    b.buy("005930", "AGGRESSIVE", 7, 100_000)
+    assert b.positions["005930"].qty == 3, f"부분체결이 {b.positions['005930'].qty} 주로 들어갔다"
+    rec = loop._filled(b.buy("005930", "AGGRESSIVE", 3, 100_000), "005930")
+    assert rec["status"] == "PARTIALLY_FILLED" and rec["open_qty"] == 4, rec
+
+    # 3) 확인을 못 하는 창구는 요청대로 넣되 확인했다고 적지 않는다.
+    class Blind(Fake):
+        CAN_CONFIRM = False
+    b = bk.HybridMockBroker.fresh(10_000_000)
+    b.kr = Blind(filled=0, open_qty=0)
+    rec = loop._filled(b.buy("005930", "AGGRESSIVE", 5, 100_000), "005930")
+    assert rec["status"] == "ASSUMED", rec["status"]
+    assert b.positions["005930"].qty == 5, "가정 경로의 동작이 바뀌었다"
+
+
+def watch_price_is_not_served_from_the_candle_cache():
+    """감시용 시세와 전략용 캔들은 신선도 요구가 다르다.
+
+    캔들 캐시(300 초)에서 가격을 꺼내면 3 초마다 봐도 최대 5 분 묵은 값을 본다.
+    손절·익절·킬스위치가 그 5 분 안에 일어나는데 감시가 그것을 못 본다.
+    """
+    from ai_trader import data
+    assert hasattr(data.KiwoomFeed, "quote_price"), "감시용 시세 경로가 없다"
+    assert data.KiwoomFeed.QUOTE_TTL <= 5, f"감시 TTL 이 {data.KiwoomFeed.QUOTE_TTL}초"
+
+    calls = {"candles": 0, "quote": 0}
+
+    class FakeApi:
+        def quote(self, symbol):
+            calls["quote"] += 1
+            return {"buy_fpr_bid": "-247500", "bid_req_base_tm": "143022"}
+
+    f = data.KiwoomFeed.__new__(data.KiwoomFeed)
+    f.api = FakeApi()
+    f._candles, f._quotes = {}, {}
+    import threading
+    f._request_lock = threading.Lock()
+    f._last_request = 0.0
+    f.candles = lambda sym, n=60: calls.__setitem__("candles", calls["candles"] + 1) or [
+        {"close": 999_999.0}]
+
+    px = f.price("005930")
+    assert px == 247_500.0, f"부호를 못 뗐거나 캔들로 갔다: {px}"
+    assert calls["quote"] == 1 and calls["candles"] == 0, calls
+    assert f.price_age("005930") is not None, "가격 나이를 모른다"
+
+    # 호가가 죽으면 캔들로 물러난다 — 0 을 주면 감시가 종목을 건너뛴다.
+    class Dead(FakeApi):
+        def quote(self, symbol):
+            raise RuntimeError("호가 조회 실패")
+    f.api, f._quotes = Dead(), {}
+    assert f.price("005930") == 999_999.0, "호가 실패 시 캔들로 물러나지 않는다"
+
+
 def zero_buying_power_is_not_replaced_by_deposit():
     """주문가능금액 0 은 유효한 값이다. 예수금으로 대체하면 못 사는 계좌를 살 수 있다고 본다.
 
@@ -1042,6 +1134,8 @@ CHECKS = [
     ("섹터는 사람이 안 넣는다", sector_comes_from_data_not_from_a_human),
     (".env 키가 실제로 읽힌다", env_file_actually_reaches_config),
     ("LLM 키 없어도 규칙으로 매매한다", no_llm_key_still_trades_on_rules),
+    ("미체결이 보유가 되지 않는다", unfilled_order_does_not_become_a_holding),
+    ("감시 시세를 캔들 캐시에서 꺼내지 않는다", watch_price_is_not_served_from_the_candle_cache),
     ("0 원 주문가능금액을 예수금으로 안 바꾼다", zero_buying_power_is_not_replaced_by_deposit),
     ("동기화가 없는 당일 손실을 안 지어낸다", synced_account_does_not_invent_a_daily_loss),
     ("정책을 안 읽은 재생은 정책을 승격 못 한다", policy_blind_replay_cannot_promote_a_policy),

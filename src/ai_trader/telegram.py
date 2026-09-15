@@ -38,7 +38,10 @@ INCIDENT_KINDS = {
 }
 # market_closed / dashboard_error 는 일부러 뺐다. 매일·수시로 나오는 것이라
 # 알림에 섞이면 배경소음이 되고, 그러면 킬스위치가 내려간 날에도 안 읽게 된다.
-STATUS_MARK = {"FILLED": "✅", "REJECTED": "🚫", "ERROR": "⚠️"}
+# ACCEPTED/UNKNOWN 은 일부러 뺐다 — 지정가는 접수만 되는 것이 정상이라 알리면 소음이 된다.
+# 다만 체결이 반쪽만 났거나 확인 못 한 채 장부에 넣은 것은 사람이 알아야 한다.
+STATUS_MARK = {"FILLED": "✅", "PARTIALLY_FILLED": "◐", "ASSUMED": "❓",
+               "REJECTED": "🚫", "ERROR": "⚠️"}
 
 
 def enabled() -> bool:
