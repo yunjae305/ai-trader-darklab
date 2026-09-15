@@ -89,7 +89,8 @@ def _feed() -> list[tuple[str, str, str]]:
         live = {k: v for k, v in got.items() if v > 0}
         status = OK if live else NO
         return [(status, "시세", f"토스 — {len(live)}/{len(C.UNIVERSE[:3])}종목 응답 {live}"),
-                (WARN, "장 운영", "열림" if feed.is_open() else "닫힘 (사이클은 건너뛴다)")]
+                (WARN, "장 운영", f"열림 · {data.session_label() or '해외'}" if feed.is_open()
+                 else f"닫힘 (사이클은 건너뛴다) · 주문 세션 {','.join(data.KR_SESSIONS)}")]
     except Exception as exc:
         return [(NO, "시세", f"{type(exc).__name__}: {str(exc)[:140]}")]
 

@@ -805,6 +805,15 @@ def market_gate_knows_when_it_is_guessing():
     assert data.session_now(datetime(2026, 9, 16, 11, 0, tzinfo=data.KST)), "정규장인데 닫혔다고 한다"
     assert not data.session_now(datetime(2026, 9, 16, 22, 0, tzinfo=data.KST)), "밤 10시에 장이 열렸다"
     assert not data.session_now(datetime(2026, 9, 16, 8, 30, tzinfo=data.KST)), "개장 전에 장이 열렸다"
+    # 2026-09-14 신설된 애프터마켓(16:00~20:00). 기본값은 정규장만이라 아직 닫혀 있어야 한다.
+    assert not data.session_now(datetime(2026, 9, 16, 17, 0, tzinfo=data.KST)), \
+        "확인도 안 된 애프터마켓에 주문을 내려 한다"
+    assert data.session_label(datetime(2026, 9, 16, 17, 0, tzinfo=data.KST)) == "after", \
+        "애프터마켓 시간을 못 알아본다"
+    # 폐지된 시간외단일가(16:00~18:00)가 아니라 애프터마켓이 그 자리를 덮는다
+    assert data.KRX_SESSIONS["after"] == (16 * 60, 20 * 60), "애프터마켓 시간이 어긋났다"
+    assert data.session_label(datetime(2026, 9, 16, 15, 35, tzinfo=data.KST)) == "", \
+        "15:30~15:40 은 어느 세션도 아니다"
     assert data.us_session_now(datetime(2026, 9, 16, 10, 0, tzinfo=data.ET)), "미국 정규장이 닫혔다"
     assert not data.us_session_now(datetime(2026, 9, 16, 16, 0, tzinfo=data.ET)), "미국 마감 뒤 장이 열렸다"
     assert not data.us_session_now(datetime(2026, 9, 16, 15, 1, tzinfo=data.ET),

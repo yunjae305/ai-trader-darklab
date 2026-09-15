@@ -22,8 +22,24 @@ from . import config as C, indicators, news as news_feed, quant, sectors
 
 KST = timezone(timedelta(hours=9))
 ET = ZoneInfo("America/New_York")
-# ponytail: KRX 정규장만 본다. NXT 연장세션(08:00~20:00)이 필요해지면 여기만 넓힌다.
-SESSION_KST = (9 * 60, 15 * 60 + 30)
+# KRX 세션 (KST 기준 분). 2026-09-14 애프터마켓이 신설되면서 같은 날
+# 기존 시간외단일가(16:00~18:00, 10분 단일가)는 폐지됐다.
+# NXT 는 여기 없다 — 주문 경로가 kiwoom.Kiwoom(exchange="KRX") 로 고정이라
+# 넥스트레이드 세션(08:00~08:50 / 15:40~20:00)으로는 주문이 나가지 않는다.
+KRX_SESSIONS = {
+    "pre_close": (8 * 60 + 30, 8 * 60 + 40),    # 장전 시간외종가 — 전일 종가
+    "regular": (9 * 60, 15 * 60 + 30),          # 정규장
+    "post_close": (15 * 60 + 40, 16 * 60),      # 장후 시간외종가 — 당일 종가
+    "after": (16 * 60, 20 * 60),                # 애프터마켓 — 2026-09-14 신설
+}
+# 어느 세션에 주문을 낼지. 기본은 정규장만 — 모의투자 서버가 연장세션 주문을
+# 받는지 확인되지 않았다. 실제로 받는 것을 확인한 뒤에 넓힌다.
+KR_SESSIONS = tuple(s.strip() for s in
+                    os.getenv("AI_TRADER_KR_SESSIONS", "regular").split(",") if s.strip())
+_unknown = set(KR_SESSIONS) - set(KRX_SESSIONS)
+if _unknown:  # .env 오타로 매매가 조용히 멈추거나 엉뚱한 때 도는 것을 막는다
+    raise ValueError(f"AI_TRADER_KR_SESSIONS 에 모르는 세션 {sorted(_unknown)} "
+                     f"— 가능한 값: {sorted(KRX_SESSIONS)}")
 SESSION_ET = (9 * 60 + 30, 16 * 60)
 # 관측 팩을 만들 때 종목별로 병렬 조회한다. 토스 시세 한도(초당 15~20)를 넘지 않는 선.
 FETCH_WORKERS = int(os.getenv("AI_TRADER_FETCH_WORKERS", "8"))
@@ -43,9 +59,21 @@ NAMES = {
 
 
 def session_now(now: datetime | None = None) -> bool:
-    """지금이 정규장 시간대인가. 휴장일 여부는 모른다 — 개장일 판정과 AND 로 쓴다."""
+    """지금이 주문을 낼 KRX 세션인가. 휴장일 여부는 모른다 — 개장일 판정과 AND 로 쓴다."""
     now = now or datetime.now(KST)
-    return SESSION_KST[0] <= now.hour * 60 + now.minute < SESSION_KST[1]
+    minute = now.hour * 60 + now.minute
+    return any(KRX_SESSIONS[name][0] <= minute < KRX_SESSIONS[name][1]
+               for name in KR_SESSIONS)
+
+
+def session_label(now: datetime | None = None) -> str:
+    """지금 열려 있는 세션 이름. 어디에도 안 걸리면 빈 문자열 — 화면과 로그가 쓴다."""
+    now = now or datetime.now(KST)
+    minute = now.hour * 60 + now.minute
+    for name, (start, end) in KRX_SESSIONS.items():
+        if start <= minute < end:
+            return name
+    return ""
 
 
 def us_session_now(now: datetime | None = None, order_amount: bool = False) -> bool:
