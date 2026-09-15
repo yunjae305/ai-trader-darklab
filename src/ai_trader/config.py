@@ -12,6 +12,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+# 이 프로세스가 .env 에서 올린 키들. 자식 프로세스를 띄울 때 빼주면 자식이
+# 파일을 다시 읽는다 — 오래 떠 있는 부모의 옛 값이 따라가지 않게 하려는 것이다.
+ENV_FILE_KEYS: set[str] = set()
+
+
 def _load_env(path: Path | None = None) -> bool:
     """`.env` 를 환경변수로 올린다. python-dotenv 없이 stdlib 만 쓴다.
 
@@ -26,7 +31,10 @@ def _load_env(path: Path | None = None) -> bool:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        key = key.strip()
+        if key not in os.environ:   # 셸에서 준 값이 파일보다 우선이다
+            os.environ[key] = value.strip().strip('"').strip("'")
+            ENV_FILE_KEYS.add(key)
     return True
 
 

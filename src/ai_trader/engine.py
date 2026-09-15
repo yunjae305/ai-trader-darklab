@@ -64,6 +64,11 @@ def _argv() -> tuple[list[str], str]:
 
 def _env() -> dict:
     env = dict(os.environ)
+    # 부모(대시보드)는 몇 시간 전 .env 를 환경에 들고 있을 수 있다. 그대로 물려주면
+    # 자식의 _load_env 가 setdefault 라 옛 값을 못 덮는다 — 실제로 앱키를 바꾼 뒤에도
+    # Run 버튼으로 뜬 루프가 옛 키로 떠서 60초마다 토큰 오류로 크래시했다.
+    for key in C.ENV_FILE_KEYS:
+        env.pop(key, None)
     src = str(C.ROOT / "src")
     env["PYTHONPATH"] = src + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     return env
